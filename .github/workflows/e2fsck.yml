@@ -1,6 +1,6 @@
 name: Manual Build e2fsprogs Static
 on: 
-  workflow_dispatch: # 开启手动触发按钮
+  workflow_dispatch:
 
 jobs:
   build:
@@ -10,11 +10,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: 'tytso/e2fsprogs'
-          ref: 'master' # 获取 2025 年 7 月最新代码
+          ref: 'master'
 
       - name: Install NDK
         run: |
-          # 直接下载并解压官方 NDK，避免插件失效错误
           wget -q https://dl.google.com/android/repository/android-ndk-r26b-linux.zip
           unzip -q android-ndk-r26b-linux.zip
           echo "NDK_PATH=$GITHUB_WORKSPACE/android-ndk-r26b" >> $GITHUB_ENV
@@ -22,25 +21,29 @@ jobs:
       - name: Configure and Build
         run: |
           mkdir build && cd build
-          # 物理锁定编译器路径，避免路径冗余错误
           TOOLCHAIN=$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64
           
+          # 核心配置：加入 --disable-elf-shlibs 确保完全不生成动态库
           ../configure --host=aarch64-linux-android --build=x86_64-linux-gnu \
               --enable-libuuid=internal \
               --enable-libblkid=internal \
               --disable-nls \
+              --disable-elf-shlibs \
               CC=$TOOLCHAIN/bin/aarch64-linux-android29-clang \
               CFLAGS="-O3 --target=aarch64-linux-android29" \
               LDFLAGS="-static" \
               cross_compiling=yes
 
-          # 物理强制拷贝，彻底杜绝权限导致的硬链接报错
-          make -j$(nproc) LN="cp -p" LN_S="cp -p" e2fsck/e2fsck resize/resize2fs
+          # 关键修正：先执行顶层 make subs，生成所有头文件(如 dirpaths.h)
+          # 然后再编译核心工具，并强制拷贝避开硬链接权限问题
+          make -j$(nproc) LN="cp -p" LN_S="cp -p" subs
+          make -j$(nproc) LN="cp -p" LN_S="cp -p" -C e2fsck
+          make -j$(nproc) LN="cp -p" LN_S="cp -p" -C resize
 
       - name: Upload Static Binaries
         uses: actions/upload-artifact@v4
         with:
-          name: e2fsprogs-1.47.3-static
+          name: e2fsprogs-1.47.3-fixed
           path: |
             build/e2fsck/e2fsck
             build/resize/resize2fs
