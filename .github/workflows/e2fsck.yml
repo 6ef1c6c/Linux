@@ -1,0 +1,44 @@
+name: Build Latest e2fsprogs Static
+on: [push, workflow_dispatch]
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+        with:
+          repository: 'tytso/e2fsprogs'
+          ref: 'master' # 确保获取 2025 年 7 月的最新代码
+
+      - name: Set up NDK
+        uses: nndk/setup-ndk@v1
+        with:
+          ndk-version: r26b # 与你之前使用的版本一致
+
+      - name: Configure and Build
+        run: |
+          mkdir build && cd build
+          # 定义交叉编译工具链路径
+          export TOOLCHAIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64
+          
+          # 核心配置流：强制静态链接且使用内建库
+          ../configure --host=aarch64-linux-android --build=x86_64-linux-gnu \
+              --enable-libuuid=internal \
+              --enable-libblkid=internal \
+              --disable-nls \
+              CC=$TOOLCHAIN/bin/aarch64-linux-android29-clang \
+              CFLAGS="-O3 --target=aarch64-linux-android29" \
+              LDFLAGS="-static" \
+              cross_compiling=yes
+
+          # 强制使用拷贝代替硬链接，双重保险避开权限报错
+          make -j$(nproc) LN="cp -p" LN_S="cp -p" e2fsck/e2fsck resize/resize2fs
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2fsprogs-v1.47.3-static
+          path: |
+            build/e2fsck/e2fsck
+            build/resize/resize2fs
