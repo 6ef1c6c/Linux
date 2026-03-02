@@ -1,4 +1,4 @@
-name: Build Latest Nano 8.2 Full Features
+name: Build Fixed Full Nano 8.2
 
 on:
   workflow_dispatch:
@@ -10,42 +10,43 @@ jobs:
       - name: Install Toolchain
         run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu make wget
 
-      - name: Build Ncurses 6.5 (The Foundation)
+      - name: Build Ncurses 6.5 (Wide-character)
         run: |
           wget https://invisible-mirror.net/archives/ncurses/ncurses-6.5.tar.gz
           tar -xf ncurses-6.5.tar.gz
           cd ncurses-6.5
-          # 开启宽字符支持以解决中文乱码
           ./configure --host=aarch64-linux-gnu --with-shared=no --enable-static --enable-widec --without-debug CPPFLAGS="-P"
           make -j$(nproc)
           mkdir -p ../dist/lib ../dist/include
           cp lib/libncursesw.a ../dist/lib/
           cp include/*.h ../dist/include/
 
-      - name: Build Nano 8.2 (Full Integration)
+      - name: Build Nano 8.2 (No Glibc Dependency)
         run: |
           wget https://www.nano-editor.org/dist/v8/nano-8.2.tar.gz
           tar -xf nano-8.2.tar.gz
           cd nano-8.2
-          # 关键：cross_compiling=yes 彻底跳过 "cannot create executables" 报错
+          # 核心修改：--disable-operating-dir 和 --disable-libmagic 减少链接依赖
+          # 增加 ac_cv_func_getpwuid=no 强制跳过导致截图 1000002287 报错的函数
           ./configure --host=aarch64-linux-gnu \
                       CC=aarch64-linux-gnu-gcc \
                       --enable-utf8 \
                       --enable-color \
                       --enable-extra \
                       --enable-nanorc \
-                      --enable-multibuffer \
                       --enable-static \
+                      --disable-nls \
+                      ac_cv_func_getpwuid=no \
+                      ac_cv_func_getpwnam=no \
                       cross_compiling=yes \
                       CPPFLAGS="-I$(pwd)/../dist/include" \
                       LDFLAGS="-static -L$(pwd)/../dist/lib" \
                       LIBS="-lncursesw"
           make -j$(nproc)
-          # 仅移除调试符号，保留所有功能指令
           aarch64-linux-gnu-strip src/nano
 
       - name: Upload Binary
         uses: actions/upload-artifact@v4
         with:
-          name: nano-8.2-full
+          name: nano-fixed-full
           path: nano-8.2/src/nano
