@@ -13,23 +13,19 @@ jobs:
           repository: util-linux/util-linux
           fetch-depth: 1
 
-      - name: Setup NDK r26b
-        uses: nsoft7/setup-ndk@v1
-        with:
-          ndk-version: r26b # 使用支持安卓 13 的现代 NDK
-
-      - name: Configure and Build
+      - name: Build Core Libraries
         run: |
           ./autogen.sh
           
-          # 设置 NDK 交叉编译路径
-          export TOOLCHAIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64
-          export TARGET=aarch64-linux-android33 # 强制指定 Android 13 (API 33)
+          # 直接使用 GitHub Runner 自带的 NDK 路径
+          # Android NDK 默认位于 $ANDROID_NDK_LATEST_HOME
+          export TOOLCHAIN=$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64
+          export TARGET=aarch64-linux-android33
           export CC=$TOOLCHAIN/bin/$TARGET-clang
           export AR=$TOOLCHAIN/bin/llvm-ar
           export STRIP=$TOOLCHAIN/bin/llvm-strip
 
-          # 开启所有磁盘相关功能，禁用不需要的系统组件
+          # 配置参数
           ./configure --host=aarch64-linux-android \
                       --prefix=/system \
                       --enable-shared \
@@ -45,23 +41,24 @@ jobs:
                       --without-ncurses \
                       --disable-makeinstall-chown
 
-          # 只编译核心动态库
           make -j$(nproc)
           
-          # 整理产物并保留 pkg-config 文件（用于以后本地编译免报错）
+          # 整理产物
           mkdir -p output/lib64
           mkdir -p output/pkgconfig
           
-          cp .libs/libmount.so.1.* output/lib64/
-          cp .libs/libblkid.so.1.* output/lib64/
-          cp .libs/libuuid.so.1.* output/lib64/
-          cp .libs/libsmartcols.so.1.* output/lib64/
+          # 拷贝库文件（包含带版本号的原始文件）
+          cp .libs/libmount.so* output/lib64/
+          cp .libs/libblkid.so* output/lib64/
+          cp .libs/libuuid.so* output/lib64/
+          cp .libs/libsmartcols.so* output/lib64/
           
+          # 拷贝 pkg-config 文件
           cp libmount/libmount.pc output/pkgconfig/
           cp libblkid/libblkid.pc output/pkgconfig/
           cp uuid/libuuid.pc output/pkgconfig/
           
-          # 移除调试符号，减小体积
+          # 瘦身
           $STRIP --strip-unneeded output/lib64/*.so*
 
       - name: Upload Artifact
