@@ -1,8 +1,7 @@
-name: Build Static AArch64 fstrim
+name: Build Ultimate Static fstrim
 
-# 改为纯手动触发，避免每次 push 都报错喵
 on:
-  workflow_dispatch:
+  workflow_dispatch: # 手动触发
 
 jobs:
   build:
@@ -14,22 +13,21 @@ jobs:
           repository: util-linux/util-linux
           fetch-depth: 1
 
-      - name: Setup Build Environment
+      - name: Install Tools
         run: |
           sudo apt-get update
-          # 增加 autopoint 解决刚才的报错，补充编译必需包
+          # 安装交叉编译器和所有构建工具
           sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
                                  autoconf automake libtool pkg-config gettext autopoint bison flex
 
-      - name: Build and Compile fstrim
+      - name: Build
         run: |
           ./autogen.sh
-          # 一次性配置：针对 AArch64、全静态、极致体积、关闭不必要功能
-          # 关键点：使用 --host 交叉编译，强制指定 LDFLAGS 静态链接
+          # 核心修复：添加 -all-static 确保不留下任何动态库依赖
+          export CC=aarch64-linux-gnu-gcc
           ./configure --host=aarch64-linux-gnu \
-                      CC=aarch64-linux-gnu-gcc \
-                      CFLAGS="-O3 -s" \
-                      LDFLAGS="-static -Wl,--gc-sections" \
+                      --prefix=/usr \
+                      LDFLAGS="-static -all-static" \
                       --enable-static \
                       --disable-shared \
                       --disable-all-programs \
@@ -39,17 +37,16 @@ jobs:
                       --enable-libuuid \
                       --without-ncurses \
                       --without-python \
-                      --without-tinfo \
-                      --without-systemd
+                      --without-systemd \
+                      --without-udev
           
-          # 只编译 fstrim 和它的依赖库
           make -j$(nproc) fstrim
           
-          # 极致瘦身：移除所有符号表和调试信息
+          # 极致瘦身
           aarch64-linux-gnu-strip --strip-all fstrim
 
-      - name: Upload fstrim Binary
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: fstrim-android-aarch64
+          name: fstrim-static-final
           path: fstrim
