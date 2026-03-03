@@ -16,7 +16,7 @@ jobs:
       - name: Install Critical Tools
         run: |
           sudo apt-get update
-          # 核心修复：必须安装 libc6-dev-arm64-cross 才能让交叉编译器工作
+          # 必须安装交叉编译器的 libc 和静态库
           sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
                                  libc6-dev-arm64-cross \
                                  autoconf automake libtool pkg-config gettext autopoint bison flex
@@ -24,29 +24,36 @@ jobs:
       - name: Build
         run: |
           ./autogen.sh
-          # 强制指定交叉编译变量
-          export CC=aarch64-linux-gnu-gcc
-          export STRIP=aarch64-linux-gnu-strip
           
-          # 开启极致静态链接：-static-libgcc 确保 C 运行时也打进去
+          # 强制环境变量
+          export CC=aarch64-linux-gnu-gcc
+          # 终极奥义：在 LDFLAGS 中加入 -static --static 和 -all-static
+          export LDFLAGS="-static --static -all-static"
+          
           ./configure --host=aarch64-linux-gnu \
-                      LDFLAGS="-static -static-libgcc -Wl,--gc-sections" \
-                      --enable-static \
                       --disable-shared \
+                      --enable-static \
                       --disable-all-programs \
                       --enable-fstrim \
                       --enable-libmount \
                       --enable-libblkid \
                       --enable-libuuid \
-                      --without-ncurses \
                       --without-python \
                       --without-systemd \
-                      --without-udev
+                      --without-udev \
+                      --without-ncurses
           
-          make -j$(nproc) fstrim
+          # 在 make 阶段再次强制静态链接参数，防止脚本漏掉
+          make -j$(nproc) fstrim LDFLAGS="-all-static"
           
-          # 极致瘦身
-          $STRIP --strip-all fstrim
+          # 验证文件是否真的是全静态链接
+          if ldd fstrim 2>&1 | grep -q "not a dynamic executable"; then
+            echo "Verification Success: Truly Static Binary"
+          else
+            echo "Warning: Binary might still be dynamic!"
+          fi
+          
+          aarch64-linux-gnu-strip --strip-all fstrim
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
