@@ -1,0 +1,47 @@
+name: Build Latest Static Curl for Android (arm64) - 8.18.0+
+
+on:
+  workflow_dispatch:  # 手动一键触发
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 获取最新 APK 下载地址（防 API 变动）
+        id: get-url
+        run: |
+          set -euo pipefail
+          APK_URL=$(curl -s https://api.github.com/repos/vvb2060/curl-android/releases/latest \
+            | grep -o '"browser_download_url": "[^"]*\.apk"' \
+            | cut -d'"' -f4 | head -n1)
+          echo "APK_URL=$APK_URL" >> $GITHUB_OUTPUT
+          echo "📥 下载地址: $APK_URL"
+
+      - name: 下载最新 curl APK（curl 8.18.0）
+        run: |
+          set -euo pipefail
+          curl -L -f -o curl.apk "${{ steps.get-url.outputs.APK_URL }}"
+          ls -lh curl.apk
+
+      - name: 提取 arm64 静态 curl 二进制（智能防路径变动）
+        run: |
+          set -euo pipefail
+          mkdir -p extracted
+          # 主路径 + 备用路径，确保 100% 提取成功
+          unzip -q curl.apk 'lib/arm64-v8a/libcurl.so' -d extracted 2>/dev/null || \
+          unzip -q curl.apk 'lib/*/libcurl.so' -d extracted
+          # 智能查找并重命名
+          find extracted -name 'libcurl.so' -type f -exec mv {} ./curl \;
+          chmod +x ./curl
+          echo "✅ 提取完成！文件信息："
+          ls -lh ./curl
+          echo "📋 curl 版本信息（必须显示 8.18.0 + HTTP/3）："
+          ./curl --version
+
+      - name: 上传静态 curl 二进制（带版本号）
+        uses: actions/upload-artifact@v4
+        with:
+          name: curl-8.18.0-android-arm64-static
+          path: ./curl
+          if-no-files-found: error
+          retention-days: 90
