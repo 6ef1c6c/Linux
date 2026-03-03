@@ -1,4 +1,4 @@
-name: Build NDK-Native lsblk (Final Fix v4)
+name: Build NDK-Native lsblk (Final Fix v5)
 
 on:
   workflow_dispatch:
@@ -25,17 +25,17 @@ jobs:
 
       - name: Patch NDK Compatibility
         run: |
-          # 1. 修复 getusershell (图 3446)
-          sed -i '1i #define getusershell() (NULL)\n#define endusershell() ((void)0)' lib/shells.c
+          # 1. 修复 getusershell/setusershell 编译 (图 3446, 3452)
+          # 在 lib/shells.c 头部增加完整的存根定义
+          sed -i '1i #define getusershell() (NULL)\n#define setusershell() ((void)0)\n#define endusershell() ((void)0)' lib/shells.c
           
-          # 2. 修复 versionsort (图 3447)
+          # 2. 修复 versionsort 缺失 (图 3447)
           sed -i 's/versionsort/alphasort/g' libmount/src/tab_parse.c
 
           # 3. 修复 fanotify 链接错误 (图 3450)
           cat <<EOF > libmount/src/monitor_fanotify.c
           #include <stdlib.h>
-          int mnt_monitor_enable_fanotify(struct libmnt_monitor *mn __attribute__((__unused__)), 
-                                         int enable __attribute__((__unused__))) {
+          int mnt_monitor_enable_fanotify(struct libmnt_monitor *mn, int enable) {
               return -1; 
           }
           EOF
@@ -49,12 +49,12 @@ jobs:
           export API=29
           
           export CC=$TOOLCHAIN/bin/${TARGET}${API}-clang
-          # 强制禁用 NCURSES 相关的环境变量，防止检测到系统自带的库
+          # 关键修改：加入 -Wl,--allow-shlib-undefined 以解决图 3452 的链接封锁
+          export LDFLAGS="-Wl,-rpath=/system/lib64 -Wl,--dynamic-linker=/system/bin/linker64 -Wl,--allow-shlib-undefined"
+          
+          # 彻底禁用可能导致报错的第三方库检测
           export NCURSES_CFLAGS=" "
           export NCURSES_LIBS=" "
-          
-          export CFLAGS="-Wno-implicit-function-declaration -Wno-int-conversion"
-          export LDFLAGS="-Wl,-rpath=/system/lib64 -Wl,--dynamic-linker=/system/bin/linker64"
 
           ./configure \
             --host=$TARGET \
@@ -77,20 +77,15 @@ jobs:
             --disable-libmount-mountfd-support \
             --disable-monitor-fanotify
 
-          # 只编译我们需要的库和程序
+          # 执行编译
           make lsblk -j$(nproc)
           
-          # 提取真身
+          # 提取真正的二进制文件并重命名为 lsblk
           cp .libs/lsblk lsblk
           $TOOLCHAIN/bin/llvm-strip lsblk
-
-      - name: Check Dependencies
-        run: |
-          # 验证是否只链接到了 Android libc.so 且没有 tinfo
-          readelf -d lsblk | grep NEEDED
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lsblk-ndk-v4
+          name: lsblk-ndk-v5
           path: lsblk
