@@ -14,7 +14,6 @@ jobs:
           fetch-depth: 1
 
       - name: Install Build Dependencies
-        # 补齐 autopoint, bison 等构建工具
         run: |
           sudo apt-get update
           sudo apt-get install -y gettext bison flex autopoint build-essential pkg-config libtool autoconf automake
@@ -23,13 +22,20 @@ jobs:
         run: |
           ./autogen.sh
           
-          # 使用 GitHub 官方自带的 NDK 路径
+          # 设置 NDK 交叉编译环境变量
           export TOOLCHAIN=$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64
           export TARGET=aarch64-linux-android33
           export CC=$TOOLCHAIN/bin/$TARGET-clang
           export AR=$TOOLCHAIN/bin/llvm-ar
           export STRIP=$TOOLCHAIN/bin/llvm-strip
 
+          # --- 核心攻克步骤：针对 Android Bionic 库打补丁 ---
+          # 修复 'endusershell' 和 'setusershell' 缺失的问题
+          sed -i '1i void setusershell(void) {}' lib/shells.c
+          sed -i '1i void endusershell(void) {}' lib/shells.c
+          sed -i '1i char *getusershell(void) { return 0; }' lib/shells.c
+
+          # 配置参数：尽量开启磁盘相关功能，禁用 Android 不支持的系统组件
           ./configure --host=aarch64-linux-android \
                       --prefix=/system \
                       --enable-shared \
@@ -39,30 +45,40 @@ jobs:
                       --enable-libblkid \
                       --enable-libmount \
                       --enable-libsmartcols \
+                      --disable-bash-completion \
+                      --disable-pylibmount \
                       --without-python \
                       --without-systemd \
                       --without-udev \
                       --without-ncurses \
-                      --disable-makeinstall-chown
+                      --without-selinux \
+                      --disable-widechar \
+                      --disable-use-tty-group \
+                      --disable-makeinstall-chown \
+                      --disable-chfn-chsh \
+                      --disable-login \
+                      --disable-su \
+                      --disable-runuser \
+                      --disable-newgrp
 
           make -j$(nproc)
           
-          # 整理产物
+          # 整理产物目录
           mkdir -p output/lib64
           mkdir -p output/pkgconfig
           
-          # 拷贝库文件（注意：.libs 目录下通常有软链接和真实文件）
+          # 拷贝库文件，使用 -d 保留链接关系
           cp -d .libs/libmount.so* output/lib64/
           cp -d .libs/libblkid.so* output/lib64/
           cp -d .libs/libuuid.so* output/lib64/
           cp -d .libs/libsmartcols.so* output/lib64/
           
-          # 拷贝 pkg-config 文件，方便后续本地开发使用
+          # 拷贝 pkg-config 文件以便未来本地编译
           cp libmount/libmount.pc output/pkgconfig/
           cp libblkid/libblkid.pc output/pkgconfig/
           cp uuid/libuuid.pc output/pkgconfig/
           
-          # 对真实 .so 文件瘦身（跳过软链接）
+          # 对真实文件执行瘦身，跳过软链接
           find output/lib64/ -type f -name "*.so*" -exec $STRIP --strip-unneeded {} +
 
       - name: Upload Artifact
