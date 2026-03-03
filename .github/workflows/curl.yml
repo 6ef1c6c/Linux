@@ -11,67 +11,61 @@ jobs:
         id: get-url
         run: |
           set -euo pipefail
-          # 先尝试找 .apk.xz，再 fallback 到 .apk
           ASSET_URL=$(curl -s https://api.github.com/repos/vvb2060/curl-android/releases/latest \
             | grep -o '"browser_download_url": "[^"]*\.apk\.xz"' \
             | cut -d'"' -f4 | head -n1)
           
           if [ -z "$ASSET_URL" ]; then
-            ASSET_URL=$(curl -s https://api.github.com/repos/vvb2060/curl-android/releases/latest \
-              | grep -o '"browser_download_url": "[^"]*\.apk"' \
-              | cut -d'"' -f4 | head -n1)
-          fi
-          
-          if [ -z "$ASSET_URL" ]; then
-            echo "❌ 未找到 .apk 或 .apk.xz asset！请检查 repo releases。"
+            echo "❌ 未找到 .apk.xz asset！"
             exit 1
           fi
           
           echo "ASSET_URL=$ASSET_URL" >> $GITHUB_OUTPUT
           echo "📥 下载地址: $ASSET_URL"
+          echo "ASSET_FILENAME=$(basename "$ASSET_URL")" >> $GITHUB_OUTPUT  # 提取真实文件名 tool-release.apk.xz
 
-      - name: 下载最新 asset（.apk.xz 或 .apk）
+      - name: 下载最新 asset（tool-release.apk.xz）
         run: |
           set -euo pipefail
-          curl -L -f -o asset_file "${{ steps.get-url.outputs.ASSET_URL }}"
-          ls -lh asset_file
+          curl -L -f -o "\( {{ steps.get-url.outputs.ASSET_FILENAME }}" " \){{ steps.get-url.outputs.ASSET_URL }}"
+          ls -lh "${{ steps.get-url.outputs.ASSET_FILENAME }}"
 
-      - name: 处理压缩（如果是 .apk.xz 则解压 xz）
+      - name: 解压 .apk.xz → 得到 .apk
         run: |
           set -euo pipefail
-          if [[ "${{ steps.get-url.outputs.ASSET_URL }}" == *.xz ]]; then
-            echo "检测到 .xz 压缩，解压..."
-            xz -d asset_file   # 解压后得到 tool-release.apk 或类似
-            mv asset_file.out curl.apk 2>/dev/null || mv asset_file.decompressed curl.apk || echo "解压后文件名为 curl.apk"
-          else
-            mv asset_file curl.apk
+          xz -d -v "${{ steps.get-url.outputs.ASSET_FILENAME }}"   # 解压后得到 tool-release.apk
+          APK_FILE=$(ls *.apk | head -n1)  # 自动找生成的 .apk
+          if [ -z "$APK_FILE" ]; then
+            echo "❌ 解压后未找到 .apk 文件！"
+            exit 1
           fi
-          ls -lh curl.apk
+          echo "APK_FILE=$APK_FILE" >> $GITHUB_ENV
+          ls -lh "$APK_FILE"
 
-      - name: 从 APK 提取 arm64 静态 curl 二进制（智能查找）
+      - name: 从 APK 提取 arm64 静态 curl 二进制
         run: |
           set -euo pipefail
           mkdir -p extracted
-          # 尝试主路径，失败则搜所有 libcurl.so
-          unzip -q curl.apk 'lib/arm64-v8a/libcurl.so' -d extracted 2>/dev/null || \
-            unzip -q curl.apk '*libcurl.so' -d extracted
-          # 找到文件并重命名
+          unzip -q "${APK_FILE}" 'lib/arm64-v8a/libcurl.so' -d extracted 2>/dev/null || \
+            unzip -q "${APK_FILE}" '*libcurl.so' -d extracted
+          
           CURL_FILE=$(find extracted -name 'libcurl.so' -type f | head -n1)
           if [ -z "$CURL_FILE" ]; then
-            echo "❌ 未在 APK 中找到 libcurl.so！"
+            echo "❌ 未找到 libcurl.so！"
             exit 1
           fi
+          
           mv "$CURL_FILE" ./curl
           chmod +x ./curl
           echo "✅ 提取完成！文件大小："
           ls -lh ./curl
-          echo "📋 版本 & 功能检查（应显示 curl 8.18.0 + HTTP/3 + BoringSSL）："
-          ./curl --version || echo "运行失败，但文件已提取，可手动推送到手机测试"
+          echo "📋 curl 版本 & 功能（应显示 8.18.0 + HTTP/3）："
+          ./curl --version || echo "版本检查失败，但文件已提取"
 
       - name: 上传静态 curl 二进制
         uses: actions/upload-artifact@v4
         with:
-          name: curl-latest-android-arm64-static
+          name: curl-8.18.0-android-arm64-static
           path: ./curl
           if-no-files-found: error
           retention-days: 90
