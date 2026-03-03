@@ -1,4 +1,4 @@
-name: Build Custom Dynamic lsblk
+name: Build Dynamic lsblk for /system/lib64
 
 on:
   workflow_dispatch:
@@ -25,15 +25,17 @@ jobs:
           ./autogen.sh
           
           export CC=aarch64-linux-gnu-gcc
-          # 核心链接参数：
-          # 1. -Wl,-rpath 指定运行时库搜索路径
-          # 2. --dynamic-linker 指定 Android 64位链接器路径
+          # 1. 强制不链接 ncurses 和 tinfo 以解决图 3439 的报错
+          # 2. 设置运行时搜索路径为 /system/lib64
           export LDFLAGS="-Wl,-rpath=/system/lib64 -Wl,--dynamic-linker=/system/bin/linker64"
 
           ./configure \
             --host=aarch64-linux-gnu \
             --disable-all-programs \
             --enable-lsblk \
+            --enable-libblkid \
+            --enable-libmount \
+            --enable-libsmartcols \
             --enable-shared \
             --disable-static \
             --without-udev \
@@ -43,25 +45,27 @@ jobs:
             --without-readline \
             --without-python \
             --without-cap-ng \
-            --without-libz \
-            --without-libmagic \
             --disable-bash-completion \
             --disable-nls \
             --disable-widechar
 
-          # 只编译 lsblk
+          # 解决图 3440 的报错：手动构建依赖库的 .la 文件但不打包它们
+          make libblkid.la libmount.la libsmartcols.la -j$(nproc)
+          
+          # 编译最终的 lsblk
           make lsblk -j$(nproc)
           
-          # 移除调试符号，确保体积最小
+          # 瘦身
           aarch64-linux-gnu-strip lsblk
 
       - name: Check Dependencies
         run: |
-          # 验证生成的文件是否只依赖了你想要的那三个库
+          # 这一步非常重要，请在日志中确认 NEEDED 部分
+          # 它应该列出 libblkid.so.1, libmount.so.1, libsmartcols.so.1
           aarch64-linux-gnu-readelf -d lsblk | grep NEEDED
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lsblk-custom-dynamic
+          name: lsblk-dynamic
           path: lsblk
