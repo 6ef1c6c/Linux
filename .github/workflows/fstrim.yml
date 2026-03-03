@@ -1,6 +1,8 @@
 name: Build Static AArch64 fstrim
 
-on: [push, workflow_dispatch]
+# 改为纯手动触发，避免每次 push 都报错喵
+on:
+  workflow_dispatch:
 
 jobs:
   build:
@@ -15,44 +17,36 @@ jobs:
       - name: Setup Build Environment
         run: |
           sudo apt-get update
-          # 安装 AArch64 交叉编译工具链和必要工具
+          # 增加 autopoint 解决刚才的报错，补充编译必需包
           sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-                                 autoconf automake libtool pkg-config gettext bison flex
+                                 autoconf automake libtool pkg-config gettext autopoint bison flex
 
-      - name: Build Static Dependencies
+      - name: Build and Compile fstrim
         run: |
-          # 这一步是关键：我们需要针对 AArch64 编译静态依赖，而不是使用 Ubuntu 自带的 x86 库
-          # 1. 编译并安装全静态 libmount 依赖链
           ./autogen.sh
+          # 一次性配置：针对 AArch64、全静态、极致体积、关闭不必要功能
+          # 关键点：使用 --host 交叉编译，强制指定 LDFLAGS 静态链接
           ./configure --host=aarch64-linux-gnu \
                       CC=aarch64-linux-gnu-gcc \
-                      LDFLAGS="-static" \
-                      --enable-static \
-                      --disable-shared \
-                      --disable-all-programs \
-                      --enable-libmount \
-                      --enable-libblkid \
-                      --enable-libuuid \
-                      --without-ncurses \
-                      --without-python
-          make -j$(nproc)
-
-      - name: Final Compilation of fstrim
-        run: |
-          # 2. 编译最终的 fstrim 程序
-          ./configure --host=aarch64-linux-gnu \
-                      CC=aarch64-linux-gnu-gcc \
-                      LDFLAGS="-static" \
+                      CFLAGS="-O3 -s" \
+                      LDFLAGS="-static -Wl,--gc-sections" \
                       --enable-static \
                       --disable-shared \
                       --disable-all-programs \
                       --enable-fstrim \
+                      --enable-libmount \
+                      --enable-libblkid \
+                      --enable-libuuid \
                       --without-ncurses \
-                      --without-python
-          make fstrim
+                      --without-python \
+                      --without-tinfo \
+                      --without-systemd
           
-          # 3. 极致瘦身：使用交叉编译版的 strip 移除所有调试符号
-          aarch64-linux-gnu-strip fstrim
+          # 只编译 fstrim 和它的依赖库
+          make -j$(nproc) fstrim
+          
+          # 极致瘦身：移除所有符号表和调试信息
+          aarch64-linux-gnu-strip --strip-all fstrim
 
       - name: Upload fstrim Binary
         uses: actions/upload-artifact@v4
