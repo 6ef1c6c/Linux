@@ -1,4 +1,4 @@
-name: Build Android 13 Shared Libs (Final-Absolute)
+name: Build Android 13 Shared Libs (Ultimate-Success)
 
 on:
   workflow_dispatch:
@@ -28,31 +28,40 @@ jobs:
           export AR=$TOOLCHAIN/bin/llvm-ar
           export STRIP=$TOOLCHAIN/bin/llvm-strip
 
-          # --- 核心攻克：暴力补丁集 ---
+          # --- 核心攻克：完善的 Android 13 补丁集 ---
           
           # 1. 修复 shell 缺失
           sed -i '1i void setusershell(void) {}' lib/shells.c
           sed -i '1i void endusershell(void) {}' lib/shells.c
           sed -i '1i char *getusershell(void) { return 0; }' lib/shells.c
 
-          # 2. 修复 versionsort 和 scandirat 类型冲突 (解决图 1000003241 报错)
-          # 我们定义一个兼容 Android 的 versionsort，并强制转换 scandirat 的参数类型
+          # 2. 创建健壮的补丁头文件 (解决图 1000003242 冲突)
           cat <<EOF > android_fix.h
+          #ifndef ANDROID_FIX_H
+          #define ANDROID_FIX_H
           #include <dirent.h>
           #include <string.h>
           #include <sys/types.h>
-          int versionsort(const struct dirent **a, const struct dirent **b) {
+
+          // 使用 static inline 避免重复定义冲突
+          static inline int versionsort(const struct dirent **a, const struct dirent **b) {
               return strverscmp((*a)->d_name, (*b)->d_name);
           }
+
+          // 强制转换 scandirat 参数类型以适配 Android Bionic
+          #ifdef scandirat
+          #undef scandirat
+          #endif
           #define scandirat(fd, dir, namelist, filter, compar) \
               scandirat(fd, dir, namelist, (int (*)(const struct dirent *))filter, \
               (int (*)(const struct dirent **, const struct dirent **))compar)
+          #endif
           EOF
 
-          # 将补丁注入到报错的核心文件顶端
+          # 将补丁精准注入到 libmount 报错的文件
           sed -i '1i #include "android_fix.h"' libmount/src/tab_parse.c
 
-          # 配置参数：禁用所有不兼容的边缘程序，专注核心库
+          # 配置参数
           ./configure --host=aarch64-linux-android \
                       --prefix=/system \
                       --enable-shared \
@@ -87,10 +96,13 @@ jobs:
           cp -d .libs/libblkid.so* output/lib64/
           cp -d .libs/libuuid.so* output/lib64/
           cp -d .libs/libsmartcols.so* output/lib64/
+          
+          # 导出 pkg-config 以备后用
           cp libmount/libmount.pc output/pkgconfig/
           cp libblkid/libblkid.pc output/pkgconfig/
           cp uuid/libuuid.pc output/pkgconfig/
           
+          # 瘦身
           find output/lib64/ -type f -name "*.so*" -exec $STRIP --strip-unneeded {} +
 
       - name: Upload Artifact
