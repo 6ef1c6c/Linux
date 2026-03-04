@@ -1,4 +1,4 @@
-name: Build RTL8812AU Direct Fix
+name: Build RTL8812AU Final Version
 
 on:
   workflow_dispatch: 
@@ -19,7 +19,7 @@ jobs:
           git clone --depth 1 https://github.com/OnePlusOSS/android_kernel_oneplus_sm8475.git kernel
           git clone --depth 1 https://github.com/aircrack-ng/rtl8812au.git driver
 
-      - name: Nuclear Patch & Bypass Headers
+      - name: Patch Kconfig & Version
         run: |
           cd kernel
           # 1. 递归修复缺失的 Kconfig 引用
@@ -31,35 +31,31 @@ jobs:
               fi
           done
 
-          # 2. 核心补丁：强制从顶层 Makefile 中切除头文件安装依赖
-          # 这将彻底终结 HDRINST 卡死问题
-          sed -i 's/.*headers_install.*//g' Makefile
-          sed -i 's/.*scripts_hinstall.*//g' Makefile
-
-          # 3. 版本号与配置对齐
+          # 2. 版本号与配置对齐
           sed -i 's/SUBLEVEL =.*/SUBLEVEL = 117/' Makefile
           sed -i '/CONFIG_LOCALVERSION=/d' ../config
           echo 'CONFIG_LOCALVERSION="-android12-9-g287b9af3dd02"' >> ../config
           
-          # 4. 禁用 GKI 白名单与检查
+          # 3. 清理厂商特有的私有检查路径
           sed -i 's/CONFIG_UNUSED_KSYMS_WHITELIST=.*/CONFIG_UNUSED_KSYMS_WHITELIST=""/' ../config
           sed -i 's/CONFIG_ABI_WHITELIST=.*/# CONFIG_ABI_WHITELIST is not set/' ../config
           
           cp ../config .config
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 olddefconfig
 
-      - name: Quick Prepare
+      - name: Quick Prepare (Skip Headers)
         run: |
           cd kernel
-          # 仅生成编译驱动必须的 bounds.h 和 asm-offsets.h
+          # 关键点：我们只执行 scripts prepare，不去触碰 headers_install 相关的逻辑
+          # 加入参数禁用部分强制检查
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 \
                KCFLAGS="-Wno-error -Wno-implicit-function-declaration" \
                scripts prepare -j$(nproc)
 
-      - name: Build Module
+      - name: Build Driver Module
         run: |
           cd driver
-          # 最终编译驱动模块
+          # 最终编译驱动模块，链接到刚才准备好的内核源码
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 \
                KSRC=$GITHUB_WORKSPACE/kernel \
                KCFLAGS="-Wno-error" \
