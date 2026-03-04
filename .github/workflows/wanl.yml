@@ -1,4 +1,4 @@
-name: Build RTL8812AU Final Protocol
+name: Build RTL8812AU Final Key
 
 on:
   workflow_dispatch: 
@@ -19,20 +19,18 @@ jobs:
           git clone --depth 1 https://github.com/OnePlusOSS/android_kernel_oneplus_sm8475.git kernel
           git clone --depth 1 https://github.com/aircrack-ng/rtl8812au.git driver
 
-      - name: Path & Type Forgery (Double Strike)
+      - name: Environment & Path Forgery
         run: |
-          # 1. 维持环境欺骗 (白名单修复)
+          # 1. 彻底解决厂商写死的白名单绝对路径报错 (针对 1000004091 截图)
           FAKE_PATH="/work/personal_build_pvc/1c4214df-492a-4e08-94ab-cd8066d8e2f0/basepvc-dis-jenkins-10.27.103.189kuqrXsvd/workspace/Personal_Debug_Release/personal_version_build_poject/code/source/vnd/kernel_platform/out/gki_kernel/common"
           sudo mkdir -p "$FAKE_PATH"
           sudo touch "$FAKE_PATH/abi_symbollist.raw"
           sudo chmod -R 777 /work/
 
+      - name: Precise Kernel Patching
+        run: |
           cd kernel
-          # 2. 核心大杀器：创建一个强制包含的补丁文件
-          # 这样可以完美解决 atomic64_t 和 atomic_t 的成员报错
-          echo -e '#ifndef __PATCH_H__\n#define __PATCH_H__\ntypedef struct { int counter; } atomic_t;\ntypedef struct { long counter; } atomic64_t;\n#endif' > include/linux/force_patch.h
-
-          # 3. 修复 Kconfig
+          # 1. 修复 Kconfig (防止配置阶段崩溃)
           grep -rE "source \".*\"" . | while read -r line; do
               file_path=$(echo "$line" | cut -d: -f1)
               target_ref=$(echo "$line" | sed -E 's/.*source "(.*)"/\1/')
@@ -41,30 +39,35 @@ jobs:
               fi
           done
 
-          # 4. 锁定版本与架构，并修改 Makefile 强制包含我们的补丁
-          sed -i '2iARCH := arm64\nSUBLEVEL := 117' Makefile
-          sed -i '/^KBUILD_CFLAGS/ s/$/ -include $(srctree)\/include\/linux\/force_patch.h/' Makefile
+          # 2. 核心：在不破坏 Makefile 的情况下注入变量 (修复 1000004095 截图的错误)
+          # 我们不使用 sed 注入，改用命令行参数传递，这样最安全
+          
+          # 3. 创建补丁头文件，解决 atomic64_t 结构体报错
+          echo -e '#ifndef __FORCED_TYPES_H__\n#define __FORCED_TYPES_H__\ntypedef struct { int counter; } atomic_t;\ntypedef struct { long counter; } atomic64_t;\n#endif' > include/linux/forced_types.h
 
+          # 4. 配置对齐
           cp ../config .config
-          # 强制关闭干扰项
           sed -i 's/CONFIG_UNUSED_KSYMS_WHITELIST=.*/CONFIG_UNUSED_KSYMS_WHITELIST=""/' .config
           sed -i 's/CONFIG_ABI_WHITELIST=.*/# CONFIG_ABI_WHITELIST is not set/' .config
           
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
 
-      - name: Final Prepare
+      - name: Final Prepare (With Hard Injection)
         run: |
           cd kernel
-          # 这一次编译器在跑 bounds.c 之前会强制加载 force_patch.h
-          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- KCFLAGS="-w" prepare0 -j$(nproc)
+          # 使用 -include 强制所有文件识别我们的 atomic 结构体定义
+          # 这种方式不会改动 Makefile 源码，避开了语法错误
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+               KCFLAGS="-w -include $(pwd)/include/linux/forced_types.h" \
+               prepare0 -j$(nproc)
 
       - name: Build Driver Module
         run: |
           cd driver
-          # 驱动编译阶段
+          # 最终驱动编译
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
                KSRC=$GITHUB_WORKSPACE/kernel \
-               KCFLAGS="-w -include $GITHUB_WORKSPACE/kernel/include/linux/force_patch.h" \
+               KCFLAGS="-w -include $GITHUB_WORKSPACE/kernel/include/linux/forced_types.h" \
                USER_MODULE_NAME=8812au -j$(nproc)
 
       - name: Upload Artifact
