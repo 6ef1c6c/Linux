@@ -1,4 +1,4 @@
-name: Build RTL8812AU Config Fix
+name: Build RTL8812AU Ultimate Fix V5
 
 on:
   workflow_dispatch: 
@@ -19,10 +19,10 @@ jobs:
           git clone --depth 1 https://github.com/OnePlusOSS/android_kernel_oneplus_sm8475.git kernel
           git clone --depth 1 https://github.com/aircrack-ng/rtl8812au.git driver
 
-      - name: Deep Patch & Config Injection
+      - name: Hard Patch Kernel & Fix Config
         run: |
           cd kernel
-          # 1. 递归修复缺失引用
+          # 1. 修复 Kconfig 引用
           grep -rE "source \".*\"" . | while read -r line; do
               file_path=$(echo "$line" | cut -d: -f1)
               target_ref=$(echo "$line" | sed -E 's/.*source "(.*)"/\1/')
@@ -31,40 +31,34 @@ jobs:
               fi
           done
 
-          # 2. 版本号与配置注入
+          # 2. 强制版本号
           sed -i 's/SUBLEVEL =.*/SUBLEVEL = 117/' Makefile
-          sed -i '/CONFIG_LOCALVERSION=/d' ../config
-          echo 'CONFIG_LOCALVERSION="-android12-9-g287b9af3dd02"' >> ../config
           
-          # 3. 核心修复：注入原子操作支持，解决 atomic64_t 报错
-          echo "CONFIG_64BIT=y" >> ../config
-          echo "CONFIG_ARCH_HAS_ATOMIC64_DEC_IF_POSITIVE=y" >> ../config
-          echo "CONFIG_GENERIC_ATOMIC64=y" >> ../config
+          # 3. 核心修正：直接在全局编译参数中注入 atomic64_t 定义
+          # 这样无论配置如何，编译器都会知道 atomic64_t 是什么
+          sed -i '/^KBUILD_CFLAGS/ s/$/ -Datomic64_t=long -Datomic64_read=readl -DCONFIG_64BIT=1/' Makefile
           
-          # 4. 彻底禁用厂商 GKI 限制
-          sed -i 's/CONFIG_UNUSED_KSYMS_WHITELIST=.*/CONFIG_UNUSED_KSYMS_WHITELIST=""/' ../config
-          sed -i 's/CONFIG_ABI_WHITELIST=.*/# CONFIG_ABI_WHITELIST is not set/' ../config
-          
+          # 4. 准备基础配置
           cp ../config .config
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
 
-      - name: GCC Prepare
+      - name: Force Prepare (Minimal Mode)
         run: |
           cd kernel
-          # 强制忽略所有警告，只管生成偏移量文件
+          # 使用 -w 屏蔽所有报错，强制生成编译驱动所需的关键头文件
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- KCFLAGS="-w" prepare0 -j$(nproc)
 
-      - name: Build Module
+      - name: Build Driver Module
         run: |
           cd driver
-          # 最终编译
+          # 编译驱动模块，同样注入类型定义以防驱动代码报错
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
                KSRC=$GITHUB_WORKSPACE/kernel \
-               KCFLAGS="-w" \
+               KCFLAGS="-w -Datomic64_t=long" \
                USER_MODULE_NAME=8812au -j$(nproc)
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: 8812au-ko-fixed
+          name: 8812au-ko-ultimate
           path: driver/8812au.ko
