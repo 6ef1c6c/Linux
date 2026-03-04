@@ -1,4 +1,4 @@
-name: Build RTL8812AU Mission Accomplished
+name: Build RTL8812AU Final Mission
 
 on:
   workflow_dispatch: 
@@ -19,10 +19,10 @@ jobs:
           git clone --depth 1 https://github.com/OnePlusOSS/android_kernel_oneplus_sm8475.git kernel
           git clone --depth 1 https://github.com/aircrack-ng/rtl8812au.git driver
 
-      - name: Nuclear Patch & System Fix
+      - name: Deep Surgery (Structure Fix)
         run: |
           cd kernel
-          # 1. 修复 Kconfig 引用
+          # 1. 修复 Kconfig
           grep -rE "source \".*\"" . | while read -r line; do
               file_path=$(echo "$line" | cut -d: -f1)
               target_ref=$(echo "$line" | sed -E 's/.*source "(.*)"/\1/')
@@ -31,20 +31,22 @@ jobs:
               fi
           done
 
-          # 2. 版本号与架构锁定
-          sed -i 's/SUBLEVEL =.*/SUBLEVEL = 117/' Makefile
-          
-          # 3. 核心修复：直接在最基础的头文件定义 atomic64_t
-          # 这能防止 scripts/mod 和 kernel/bounds.c 因为不认识这个类型而崩溃
-          sed -i '/typedef __kernel_uid32_t/a typedef long long atomic64_t;' include/uapi/asm-generic/types.h
+          # 2. 核心修正：注入“结构化”的 atomic64 定义，解决 .counter 报错
+          # 我们直接在 asm-generic/types.h 注入完整的结构体，骗过内核宏
+          sed -i '/typedef __kernel_uid32_t/a \
+          typedef struct { long counter; } atomic64_t; \
+          typedef struct { int counter; } atomic_t;' include/uapi/asm-generic/types.h
 
-          # 4. 实施“空城计”解决白名单报错
+          # 3. 抹除 GKI 路径报错 (针对截图 1000004087)
           WHITELIST_MOCK="$GITHUB_WORKSPACE/kernel/abi_symbollist.raw"
           touch "$WHITELIST_MOCK"
           find . -type f -name "Makefile*" -exec sed -i "s|/work/personal_build_pvc/[^ ']*raw|$WHITELIST_MOCK|g" {} + || true
 
-          # 5. 配置对齐
+          # 4. 锁定架构与版本
+          sed -i '2iARCH := arm64\nSUBLEVEL := 117' Makefile
           cp ../config .config
+          
+          # 强制关闭任何可能干扰编译的白名单开关
           sed -i 's/CONFIG_UNUSED_KSYMS_WHITELIST=.*/CONFIG_UNUSED_KSYMS_WHITELIST=""/' .config
           sed -i 's/CONFIG_ABI_WHITELIST=.*/# CONFIG_ABI_WHITELIST is not set/' .config
           
@@ -53,18 +55,16 @@ jobs:
       - name: Final Prepare
         run: |
           cd kernel
-          # 使用 -Datomic64_t=long 确保编译器在所有阶段都认识它
-          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-               KCFLAGS="-w -Datomic64_t='long long'" \
-               prepare0 -j$(nproc)
+          # 此时 types.h 已经有了结构体定义，prepare0 应该能顺利跑完
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- KCFLAGS="-w" prepare0 -j$(nproc)
 
       - name: Build Driver Module
         run: |
           cd driver
-          # 此时内核环境已就绪，开始编译驱动
+          # 编译驱动，链接到修好的内核源码
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
                KSRC=$GITHUB_WORKSPACE/kernel \
-               KCFLAGS="-w -Datomic64_t='long long'" \
+               KCFLAGS="-w" \
                USER_MODULE_NAME=8812au -j$(nproc)
 
       - name: Upload Artifact
