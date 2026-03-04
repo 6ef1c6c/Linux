@@ -1,4 +1,4 @@
-name: Build RTL8812AU Final Flash
+name: Build RTL8812AU Ultra Force
 
 on:
   workflow_dispatch: 
@@ -19,55 +19,46 @@ jobs:
           git clone --depth 1 https://github.com/OnePlusOSS/android_kernel_oneplus_sm8475.git kernel
           git clone --depth 1 https://github.com/aircrack-ng/rtl8812au.git driver
 
-      - name: Path & Type Forgery
+      - name: Minimal Path & Type Patch
         run: |
-          # 1. 解决厂商白名单路径报错
+          # 1. 快速解决白名单路径报错
           FAKE_PATH="/work/personal_build_pvc/1c4214df-492a-4e08-94ab-cd8066d8e2f0/basepvc-dis-jenkins-10.27.103.189kuqrXsvd/workspace/Personal_Debug_Release/personal_version_build_poject/code/source/vnd/kernel_platform/out/gki_kernel/common"
           sudo mkdir -p "$FAKE_PATH"
           sudo touch "$FAKE_PATH/abi_symbollist.raw"
-          sudo chmod -R 777 /work/
-
+          
           cd kernel
-          # 2. 创建智能类型补丁，解决 atomic64_t 结构体报错
-          echo -e '#ifndef __PATCH_ATOMIC_H__\n#define __PATCH_ATOMIC_H__\n#include <linux/types.h>\n#ifndef ATOMIC64_INIT\ntypedef struct { long counter; } atomic64_t_patch;\n#define atomic64_t atomic64_t_patch\n#endif\n#endif' > include/linux/smart_patch.h
+          # 2. 注入核心类型定义
+          echo -e '#ifndef __PATCH_H__\n#define __PATCH_H__\n#include <linux/types.h>\ntypedef struct { int counter; } atomic_t_p;\ntypedef struct { long counter; } atomic64_t_p;\n#define atomic_t atomic_t_p\n#define atomic64_t atomic64_t_p\n#endif' > include/linux/force_patch.h
 
-          # 3. 修复 Kconfig
-          grep -rE "source \".*\"" . | while read -r line; do
-              file_path=$(echo "$line" | cut -d: -f1)
-              target_ref=$(echo "$line" | sed -E 's/.*source "(.*)"/\1/')
-              if [ ! -f "$target_ref" ]; then
-                  sed -i "\|source \"$target_ref\"|d" "$file_path"
-              fi
-          done
-
-          # 4. 基础配置
+          # 3. 基础配置
           cp ../config .config
           sed -i 's/CONFIG_UNUSED_KSYMS_WHITELIST=.*/CONFIG_UNUSED_KSYMS_WHITELIST=""/' .config
           sed -i 's/CONFIG_ABI_WHITELIST=.*/# CONFIG_ABI_WHITELIST is not set/' .config
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
 
-      - name: Fast Kernel Prepare
+      - name: Manual Emergency Prepare
         run: |
           cd kernel
-          # 使用 modules_prepare 代替 prepare0，跳过耗时的原子操作自检脚本
-          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-               KCFLAGS="-w -include $(pwd)/include/linux/smart_patch.h" \
-               modules_prepare -j$(nproc)
+          # 暴力手动生成最核心的头文件，跳过所有内核脚本安装过程
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- KCFLAGS="-w -include $(pwd)/include/linux/force_patch.h" prepare-objtool -j$(nproc)
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- KCFLAGS="-w -include $(pwd)/include/linux/force_patch.h" include/generated/bounds.h
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- KCFLAGS="-w -include $(pwd)/include/linux/force_patch.h" include/generated/uapi/linux/version.h
           
-          # 补齐版本头文件
-          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- include/generated/uapi/linux/version.h
+          # 建立必要的软链接防止驱动找不到架构头文件
+          mkdir -p include/asm
+          cp -r arch/arm64/include/asm/* include/asm/ || true
 
       - name: Build Driver Module
         run: |
           cd driver
-          # 强行编译驱动，即使内核准备阶段被我们人为简化
+          # 强制编译驱动
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
                KSRC=$GITHUB_WORKSPACE/kernel \
-               KCFLAGS="-w -include $GITHUB_WORKSPACE/kernel/include/linux/smart_patch.h" \
+               KCFLAGS="-w -include $GITHUB_WORKSPACE/kernel/include/linux/force_patch.h" \
                USER_MODULE_NAME=8812au -j$(nproc)
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: 8812au-ko-flash
+          name: 8812au-ko-ultra
           path: driver/8812au.ko
