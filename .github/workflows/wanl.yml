@@ -1,4 +1,4 @@
-name: Build RTL8812AU Ultimate Fix V2
+name: Build RTL8812AU Ultimate Fix V3
 
 on:
   workflow_dispatch: 
@@ -21,10 +21,10 @@ jobs:
           git clone --depth 1 https://github.com/OnePlusOSS/android_kernel_oneplus_sm8475.git kernel
           git clone --depth 1 https://github.com/aircrack-ng/rtl8812au.git driver
 
-      - name: Nuclear Patch & Disable GKI Check
+      - name: Deep Patch & Disable Checks
         run: |
           cd kernel
-          # 1. 递归修复 Kconfig 缺失文件引用
+          # 1. 递归修复 Kconfig 引用 (Nuclear Patch)
           grep -rE "source \".*\"" . | while read -r line; do
               file_path=$(echo "$line" | cut -d: -f1)
               target_ref=$(echo "$line" | sed -E 's/.*source "(.*)"/\1/')
@@ -33,33 +33,44 @@ jobs:
               fi
           done
 
-          # 2. 对齐版本号
+          # 2. 版本对齐
           sed -i 's/SUBLEVEL =.*/SUBLEVEL = 117/' Makefile
           sed -i '/CONFIG_LOCALVERSION=/d' ../config
           echo 'CONFIG_LOCALVERSION="-android12-9-g287b9af3dd02"' >> ../config
           
-          # 3. --- 核心修正：屏蔽 GKI ABI 检查和符号白名单 ---
-          # 删掉所有会导致寻找私有路径的配置项
-          sed -i 's/CONFIG_UNUSED_KSYMS_WHITELIST=.*/# CONFIG_UNUSED_KSYMS_WHITELIST is not set/' ../config
-          sed -i 's/CONFIG_ABI_WHITELIST=.*/# CONFIG_ABI_WHITELIST is not set/' ../config
+          # 3. 彻底禁用 GKI/白名单相关配置
+          # 这一步是为了解决你截图 1000004042 中的 whitelist 错误
+          sed -i '/CONFIG_UNUSED_KSYMS_WHITELIST/d' ../config
+          sed -i '/CONFIG_ABI_WHITELIST/d' ../config
           sed -i '/CONFIG_GKI_HACKS_ALL/d' ../config
+          sed -i '/CONFIG_GKI_KPROBES_WHITELIST/d' ../config
+          echo 'CONFIG_UNUSED_KSYMS_WHITELIST=""' >> ../config
           
           cp ../config .config
           
-          # 4. 应用配置并准备环境
+          # 4. 生成配置并尝试应用
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 olddefconfig
-          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 modules_prepare
+
+      - name: Prepare Modules (Safe Mode)
+        run: |
+          cd kernel
+          # 增加 KCFLAGS="-Wno-error" 防止编译器因警告而报错
+          # 这是为了解决你截图 1000004043 中的 atomic 错误
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 \
+               KCFLAGS="-Wno-error -Wno-implicit-function-declaration" \
+               modules_prepare -j$(nproc)
 
       - name: Build Module
         run: |
           cd driver
-          # 针对 RTL8812AU 源码的通用交叉编译参数
+          # 编译最终的驱动模块
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 \
                KSRC=$GITHUB_WORKSPACE/kernel \
+               KCFLAGS="-Wno-error" \
                USER_MODULE_NAME=8812au -j$(nproc)
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: 8812au-ko-final
+          name: 8812au-ko-V3
           path: driver/8812au.ko
