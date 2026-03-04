@@ -1,4 +1,4 @@
-name: Build RTL8812AU Ultimate Fix V5
+name: Build RTL8812AU Final Stable
 
 on:
   workflow_dispatch: 
@@ -19,10 +19,10 @@ jobs:
           git clone --depth 1 https://github.com/OnePlusOSS/android_kernel_oneplus_sm8475.git kernel
           git clone --depth 1 https://github.com/aircrack-ng/rtl8812au.git driver
 
-      - name: Hard Patch Kernel & Fix Config
+      - name: Patch Kconfig & Align Version
         run: |
           cd kernel
-          # 1. 修复 Kconfig 引用
+          # 1. 递归修复缺失引用（防止 olddefconfig 报错）
           grep -rE "source \".*\"" . | while read -r line; do
               file_path=$(echo "$line" | cut -d: -f1)
               target_ref=$(echo "$line" | sed -E 's/.*source "(.*)"/\1/')
@@ -31,27 +31,26 @@ jobs:
               fi
           done
 
-          # 2. 强制版本号
+          # 2. 版本号对齐
           sed -i 's/SUBLEVEL =.*/SUBLEVEL = 117/' Makefile
           
-          # 3. 核心修正：直接在全局编译参数中注入 atomic64_t 定义
-          # 这样无论配置如何，编译器都会知道 atomic64_t 是什么
-          sed -i '/^KBUILD_CFLAGS/ s/$/ -Datomic64_t=long -Datomic64_read=readl -DCONFIG_64BIT=1/' Makefile
-          
-          # 4. 准备基础配置
+          # 3. 准备基础配置
           cp ../config .config
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
 
-      - name: Force Prepare (Minimal Mode)
+      - name: Safe Prepare (Macro Injection)
         run: |
           cd kernel
-          # 使用 -w 屏蔽所有报错，强制生成编译驱动所需的关键头文件
-          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- KCFLAGS="-w" prepare0 -j$(nproc)
+          # 核心修正：通过 KCFLAGS 注入定义，不碰 Makefile 文件
+          # -w: 屏蔽警告; -D: 注入宏定义
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+               KCFLAGS="-w -Datomic64_t=long -Datomic64_read=readl -DCONFIG_64BIT=1" \
+               prepare0 -j$(nproc)
 
       - name: Build Driver Module
         run: |
           cd driver
-          # 编译驱动模块，同样注入类型定义以防驱动代码报错
+          # 编译驱动模块，链接到内核源码
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
                KSRC=$GITHUB_WORKSPACE/kernel \
                KCFLAGS="-w -Datomic64_t=long" \
@@ -60,5 +59,5 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: 8812au-ko-ultimate
+          name: 8812au-ko-final
           path: driver/8812au.ko
