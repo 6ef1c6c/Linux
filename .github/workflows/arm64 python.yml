@@ -38,23 +38,13 @@ jobs:
           echo "TARGET=$TARGET" >> $GITHUB_ENV
           echo "API=$API" >> $GITHUB_ENV
 
-      - name: Create NDK toolchain symlinks for OpenSSL
-        run: |
-          cd $TOOLCHAIN/bin
-          # OpenSSL expects aarch64-linux-android-gcc etc.
-          ln -sf $TARGET$API-clang $TARGET-gcc
-          ln -sf $TARGET$API-clang++ $TARGET-g++
-          ln -sf llvm-ar $TARGET-ar
-          ln -sf llvm-ranlib $TARGET-ranlib
-          # Add to PATH
-          echo "$TOOLCHAIN/bin" >> $GITHUB_PATH
-
       - name: Build OpenSSL (static)
         run: |
+          export PATH=$TOOLCHAIN/bin:$PATH
+          export ANDROID_NDK=$NDK_PATH
           wget https://www.openssl.org/source/openssl-3.0.13.tar.gz
           tar xf openssl-3.0.13.tar.gz
           cd openssl-3.0.13
-          # Configure for android-arm64, static only
           ./Configure android-arm64 -D__ANDROID_API__=$API --prefix=$PWD/install no-shared
           make -j$(nproc)
           make install_sw
@@ -94,7 +84,6 @@ jobs:
           cd Python-3.11.6
           export PATH=$TOOLCHAIN/bin:$PATH
 
-          # config.site to predefine checks
           cat > config.site << 'EOF'
           ac_cv_file__dev_ptc=no
           ac_cv_file__dev_ptmx=no
