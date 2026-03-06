@@ -19,7 +19,7 @@ jobs:
           unzip android-ndk-r25c-linux.zip
           echo "NDK_PATH=${PWD}/android-ndk-r25c" >> $GITHUB_ENV
 
-      - name: Set up NDK toolchain and create legacy symlinks
+      - name: Set up NDK toolchain
         run: |
           export TOOLCHAIN=$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin
           export TARGET=aarch64-linux-android
@@ -27,12 +27,7 @@ jobs:
 
           echo "$TOOLCHAIN" >> $GITHUB_PATH
 
-          cd $TOOLCHAIN
-          ln -sf $TARGET$API-clang $TARGET-gcc
-          ln -sf $TARGET$API-clang++ $TARGET-g++
-          ln -sf llvm-ar $TARGET-ar
-          ln -sf llvm-ranlib $TARGET-ranlib
-
+          # Export compiler variables
           echo "TARGET=$TARGET" >> $GITHUB_ENV
           echo "API=$API" >> $GITHUB_ENV
           echo "CC=$TARGET$API-clang" >> $GITHUB_ENV
@@ -77,10 +72,11 @@ jobs:
           SRC_DIR=$(tar tf ncurses-*.tar.gz | head -1 | cut -d/ -f1)
           echo "NCURSES_SRC_DIR=$PWD/$SRC_DIR" >> $GITHUB_ENV
 
-      - name: Build ncurses (static) - skip install.progs
+      - name: Build ncurses (static)
         run: |
           cd $NCURSES_SRC_DIR
           make distclean || true
+          # 配置时只传递必要的 CFLAGS（不设置 LDFLAGS，避免影响编译器测试）
           ./configure \
             --host=$TARGET \
             --prefix=$PWD/install \
@@ -92,10 +88,9 @@ jobs:
             --enable-termcap \
             --with-terminfo-dirs=/system/etc/terminfo:/data/misc/terminfo \
             --with-default-terminfo-dir=/system/etc/terminfo \
-            CFLAGS="-fPIE" \
-            LDFLAGS="-pie -static-libgcc"
+            CFLAGS="-fPIE"
           make -j$(nproc)
-          # 只安装库和terminfo数据，跳过可执行程序（解决交叉编译时无法运行tic的问题）
+          # 只安装库和 terminfo 数据，跳过可执行程序（避免交叉编译时无法运行 tic）
           make install.libs install.data
           echo "NCURSES_DIR=$PWD/install" >> $GITHUB_ENV
 
@@ -109,8 +104,9 @@ jobs:
       - name: Configure and compile nano (static)
         run: |
           cd $NANO_SRC_DIR
+          # 设置完全静态链接的编译标志
           export CFLAGS="-fPIE -O2 -I$NCURSES_DIR/include"
-          export LDFLAGS="-pie -static-libgcc -L$NCURSES_DIR/lib"
+          export LDFLAGS="-pie -static -L$NCURSES_DIR/lib"
           export LIBS="-lncursesw -ltinfo"
 
           ./configure \
