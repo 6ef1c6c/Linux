@@ -11,26 +11,35 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: util-linux/util-linux
-          fetch-depth: 1
+          fetch-depth: 1 # 拉取最新源码
 
-      - name: Install Critical Tools
+      - name: Install Build Dependencies
         run: |
           sudo apt-get update
-          # 必须安装交叉编译器的 libc 和静态库
-          sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-                                 libc6-dev-arm64-cross \
-                                 autoconf automake libtool pkg-config gettext autopoint bison flex
+          # 安装构建必需的基础工具，去掉了残缺的交叉编译器
+          sudo apt-get install -y autoconf automake libtool pkg-config gettext bison flex wget tar file
 
-      - name: Build
+      - name: Setup musl-cross Toolchain
+        run: |
+          # 终极杀器：下载专门用于生成全静态二进制文件的独立 musl 工具链
+          wget https://musl.cc/aarch64-linux-musl-cross.tgz
+          tar -xf aarch64-linux-musl-cross.tgz
+          
+          # 将解压后的工具链加入 GitHub Actions 的全局环境变量中
+          echo "$(pwd)/aarch64-linux-musl-cross/bin" >> $GITHUB_PATH
+
+      - name: Configure and Build
         run: |
           ./autogen.sh
           
-          # 强制环境变量
-          export CC=aarch64-linux-gnu-gcc
-          # 终极奥义：在 LDFLAGS 中加入 -static --static 和 -all-static
-          export LDFLAGS="-static --static -all-static"
+          # 极简且正确的环境变量：只用 -static，绝不多加会导致 configure 报错的废参数
+          export CC="aarch64-linux-musl-gcc"
+          export CFLAGS="-Os -static"
+          export LDFLAGS="-static"
           
-          ./configure --host=aarch64-linux-gnu \
+          # 运行配置脚本
+          # --host 指定目标架构，--disable-nls 禁用会导致报错的本地化语言支持
+          ./configure --host=aarch64-linux-musl \
                       --disable-shared \
                       --enable-static \
                       --disable-all-programs \
@@ -41,22 +50,24 @@ jobs:
                       --without-python \
                       --without-systemd \
                       --without-udev \
-                      --without-ncurses
+                      --without-ncurses \
+                      --without-cap-ng \
+                      --disable-nls \
+                      --disable-bash-completion
           
-          # 在 make 阶段再次强制静态链接参数，防止脚本漏掉
-          make -j$(nproc) fstrim LDFLAGS="-all-static"
+          # 精准狙击：只编译 fstrim 及其必需的库，防止其他无用组件引发报错
+          make fstrim LDFLAGS="-static"
           
-          # 验证文件是否真的是全静态链接
-          if ldd fstrim 2>&1 | grep -q "not a dynamic executable"; then
-            echo "Verification Success: Truly Static Binary"
-          else
-            echo "Warning: Binary might still be dynamic!"
-          fi
+          # 剥离调试信息，极大缩小体积
+          aarch64-linux-musl-strip --strip-all fstrim
           
-          aarch64-linux-gnu-strip --strip-all fstrim
+          # 输出文件信息，验证是否真的是静态链接
+          echo "========================================"
+          file fstrim
+          echo "========================================"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: fstrim-android-aarch64
+          name: fstrim-android-aarch64-musl-static
           path: fstrim
