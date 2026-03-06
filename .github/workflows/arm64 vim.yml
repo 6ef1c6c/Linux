@@ -1,0 +1,133 @@
+name: Build static Vim for Android (arm64) - latest version
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Install system dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y make wget curl gettext
+
+      - name: Download Android NDK
+        run: |
+          wget https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+          unzip android-ndk-r25c-linux.zip
+          echo "NDK_PATH=${PWD}/android-ndk-r25c" >> $GITHUB_ENV
+
+      - name: Set up NDK environment
+        run: |
+          TOOLCHAIN=$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64
+          TARGET=aarch64-linux-android
+          API=21
+          BIN_DIR=$TOOLCHAIN/bin
+          echo "$BIN_DIR" >> $GITHUB_PATH
+          echo "CC=$BIN_DIR/clang -target $TARGET$API" >> $GITHUB_ENV
+          echo "CXX=$BIN_DIR/clang++ -target $TARGET$API" >> $GITHUB_ENV
+          echo "AR=$BIN_DIR/llvm-ar" >> $GITHUB_ENV
+          echo "STRIP=$BIN_DIR/llvm-strip" >> $GITHUB_ENV
+          echo "TARGET=$TARGET" >> $GITHUB_ENV
+
+      # --- 1. 获取最新版本号 (自动检测) ---
+      - name: Get latest ncurses version
+        id: ncurses
+        run: |
+          LATEST=$(curl -s ftp://ftp.gnu.org/gnu/ncurses/ | grep -oP 'ncurses-\K[0-9]+\.[0-9]+' | sort -V | tail -n1)
+          echo "version=${LATEST:-6.5}" >> $GITHUB_OUTPUT
+
+      - name: Get latest Vim version
+        id: vim
+        run: |
+          # 从 Vim 官方 GitHub 获取最新发布的标签名 (例如 v9.1.1234)
+          LATEST_TAG=$(curl -s https://api.github.com/repos/vim/vim/releases/latest | grep -oP '"tag_name": "\K[^"]+')
+          # 去掉版本号前的 'v' 字符，得到类似 9.1.1234 的格式
+          VERSION=${LATEST_TAG#v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+
+      # --- 2. 编译依赖库 ncurses (静态) ---
+      - name: Download and build ncurses (static)
+        run: |
+          wget ftp://ftp.gnu.org/gnu/ncurses/ncurses-${{ steps.ncurses.outputs.version }}.tar.gz
+          tar xf ncurses-*.tar.gz
+          cd ncurses-*
+          # 配置和编译 ncurses，仅生成静态库
+          ./configure --host=$TARGET --prefix=$PWD/install \
+                      --without-shared --with-normal \
+                      --without-debug --without-ada \
+                      --enable-widec --enable-termcap \
+                      CFLAGS="-fPIE"
+          make -j$(nproc)
+          make install.libs
+          echo "NCURSES_DIR=$PWD/install" >> $GITHUB_ENV
+
+      # --- 3. 下载 terminfo (从 Termux 获取) ---
+      - name: Download prebuilt terminfo from Termux
+        run: |
+          # 下载 Termux 的 ncurses 包（里面包含完整的 terminfo 数据库）
+          wget https://packages.termux.org/apt/termux-main/pool/main/n/ncurses/ncurses_6.4-1_aarch64.deb
+          ar x ncurses_*.deb
+          tar xf data.tar.xz
+          # terminfo 位于解压根目录的 ./data/data/com.termux/files/usr/share/terminfo
+          mkdir -p terminfo
+          cp -r ./data/data/com.termux/files/usr/share/terminfo/* terminfo/
+
+      # --- 4. 下载并编译 Vim (静态) ---
+      - name: Download Vim source
+        run: |
+          git clone --branch ${{ steps.vim.outputs.tag }} --depth 1 https://github.com/vim/vim.git
+          echo "VIM_SRC_DIR=$PWD/vim" >> $GITHUB_ENV
+
+      - name: Configure Vim (minimal static)
+        run: |
+          cd $VIM_SRC_DIR/src
+          # 关键配置选项：最小化特性，静态链接，UTF-8支持
+          export CPPFLAGS="-I$NCURSES_DIR/include -I$NCURSES_DIR/include/ncursesw"
+          export LDFLAGS="-L$NCURSES_DIR/lib"
+          export CFLAGS="-fPIE -O2"
+
+          ./configure \
+            --host=$TARGET \
+            --with-features=tiny \
+            --disable-gui \
+            --without-x \
+            --disable-netbeans \
+            --disable-channel \
+            --disable-terminal \
+            --disable-arabic \
+            --disable-farsi \
+            --disable-libsodium \
+            --enable-multibyte \
+            --with-tlib=ncursesw \
+            --prefix=$PWD/install \
+            ac_cv_sizeof_int=4
+
+      - name: Compile Vim (static)
+        run: |
+          cd $VIM_SRC_DIR/src
+          # 编译时强制静态链接，并链接 ncursesw
+          make -j$(nproc) LDFLAGS="$LDFLAGS -static -pie" LIBS="-lncursesw"
+          make install
+
+      # --- 5. 打包最终产物 ---
+      - name: Package final artifact
+        run: |
+          mkdir -p output
+          cp $VIM_SRC_DIR/src/install/bin/vim output/
+          cp -r terminfo output/
+          cd output
+          $STRIP vim
+          # 验证静态链接
+          echo "=== Checking linked libraries (should only show system libs) ==="
+          readelf -d vim | grep NEEDED || true
+          tar -czf $GITHUB_WORKSPACE/vim-android-static.tar.gz *
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vim-android-static-latest
+          path: vim-android-static.tar.gz
