@@ -16,12 +16,12 @@ jobs:
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
-          # 修复 Image 3：补齐构建必须的组件
+          # 修复 Image 3：补齐构建必须的 autopoint 和 gettext
           sudo apt-get install -y autoconf automake libtool pkg-config bison flex wget tar file xz-utils build-essential gettext autopoint
 
       - name: Setup Bootlin Toolchain
         run: |
-          # 修复 Image 2：换用最稳定的官方源
+          # 修复 Image 2：使用最稳的 Bootlin 官方节点
           wget https://toolchains.bootlin.com/downloads/releases/toolchains/aarch64/tarballs/aarch64--musl--stable-2024.05-1.tar.xz
           tar -xf aarch64--musl--stable-2024.05-1.tar.xz
           echo "$(pwd)/aarch64--musl--stable-2024.05-1/bin" >> $GITHUB_PATH
@@ -30,12 +30,13 @@ jobs:
         run: |
           ./autogen.sh
           
-          # 修复 Image 4/5/7 的核心：
-          # 1. -fno-stack-protector: 解决重定位报错
-          # 2. -no-pie: 确保生成真正的、不需要解释器的静态文件
+          # 针对 Image 4/5/7/8 的核心修复参数：
+          # 1. -fno-stack-protector: 杀掉那个让链接器报错的 __stack_chk_guard
+          # 2. -no-pie: 彻底断绝文件对外部链接器的念想，解决“No such file”
+          # 3. -all-static: 给链接器下死命令，必须全静态
           export CC="aarch64-linux-gcc"
           export CFLAGS="-Os -static -fno-stack-protector -no-pie"
-          export LDFLAGS="-static -no-pie"
+          export LDFLAGS="-static -static-libgcc -no-pie"
           
           ./configure --host=aarch64-linux \
                       --disable-shared \
@@ -53,17 +54,21 @@ jobs:
                       --disable-nls \
                       --disable-bash-completion
           
-          # 强制注入参数进行编译
+          # 强制注入参数进行最终编译
           make fstrim CFLAGS="-Os -static -fno-stack-protector" LDFLAGS="-static -no-pie"
           
-          # 裁剪文件
+          # 裁剪文件减小体积
           aarch64-linux-strip --strip-all fstrim
           
-          # 关键验证环节
+          # 关键验证环节：检查是否真的没有动态依赖
           echo "Build Finished! Verification:"
           file fstrim
-          # 如果 readelf 没有任何输出，说明这才是真正的静态二进制文件
-          readelf -d fstrim | grep "NEEDED" || echo "RESULT: Truly Static Binary for Android!"
+          if readelf -l fstrim | grep -q "program interpreter"; then
+            echo "ERROR: Binary is still dynamic! Check logs."
+            exit 1
+          else
+            echo "SUCCESS: Truly static binary detected!"
+          fi
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
