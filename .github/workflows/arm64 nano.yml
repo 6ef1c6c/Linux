@@ -180,14 +180,22 @@ jobs:
           # Create output directory
           mkdir -p $GITHUB_WORKSPACE/nano-android/terminfo
 
-          # Find terminfo directory
-          TERMINFO_SRC=""
-          if [ -d "$NCURSES_DIR/share/terminfo" ]; then
-            TERMINFO_SRC="$NCURSES_DIR/share/terminfo"
-          elif [ -d "$NCURSES_DIR/share/terminfo" ]; then
-            TERMINFO_SRC="$NCURSES_DIR/share/terminfo"
-          elif [ -d "$NCURSES_SRC_DIR/misc/terminfo" ]; then
-            TERMINFO_SRC="$NCURSES_SRC_DIR/misc/terminfo"
-          else
-            # Try to find any directory named terminfo under NCURSES_DIR
-            TERMINFO_SRC=$(find "$NCURSES_DIR" -type d -na
+          # terminfo directory should be in NCURSES_DIR/share/terminfo
+          TERMINFO_SRC="$NCURSES_DIR/share/terminfo"
+          if [ ! -d "$TERMINFO_SRC" ]; then
+            echo "ERROR: terminfo directory not found at $TERMINFO_SRC"
+            exit 1
+          fi
+
+          echo "Copying terminfo from $TERMINFO_SRC"
+          cp -r "$TERMINFO_SRC"/. $GITHUB_WORKSPACE/nano-android/terminfo/
+
+          cp nano $GITHUB_WORKSPACE/nano-android/
+          cd $GITHUB_WORKSPACE/nano-android
+          tar -czf $GITHUB_WORKSPACE/nano-android-static.tar.gz *
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nano-android-static-latest
+          path: nano-android-static.tar.gz
