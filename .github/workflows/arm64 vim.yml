@@ -67,28 +67,20 @@ jobs:
           make install.libs
           echo "NCURSES_DIR=$PWD/install" >> $GITHUB_ENV
 
-      # --- 检测 ncurses 库名并验证 tgetent 符号 ---
-      - name: Detect ncurses library and verify
+      # --- 检测 ncurses 库名 ---
+      - name: Detect ncurses library name
         run: |
           echo "=== NCURSES_DIR/lib contents ==="
           ls -la $NCURSES_DIR/lib
-          echo "=== Searching for ncurses static library ==="
           if [ -f "$NCURSES_DIR/lib/libncursesw.a" ]; then
             echo "Found libncursesw.a"
-            LIB_NAME="ncursesw"
+            echo "NCURSES_LIB_NAME=ncursesw" >> $GITHUB_ENV
           elif [ -f "$NCURSES_DIR/lib/libncurses.a" ]; then
             echo "Found libncurses.a"
-            LIB_NAME="ncurses"
+            echo "NCURSES_LIB_NAME=ncurses" >> $GITHUB_ENV
           else
             echo "ERROR: No ncurses static library found!"
             exit 1
-          fi
-          echo "NCURSES_LIB_NAME=$LIB_NAME" >> $GITHUB_ENV
-          echo "=== Checking for tgetent symbol in library ==="
-          if $AR t "$NCURSES_DIR/lib/lib${LIB_NAME}.a" | grep -q "tgetent"; then
-            echo "tgetent found in library."
-          else
-            echo "WARNING: tgetent not found in library, but may be in termlib component."
           fi
 
       # --- 下载 Vim 源码 ---
@@ -103,7 +95,8 @@ jobs:
           cd $VIM_SRC_DIR/src
           export CPPFLAGS="-I$NCURSES_DIR/include -I$NCURSES_DIR/include/ncursesw"
           export LDFLAGS="-L$NCURSES_DIR/lib"
-          export LIBS="-l${NCURSES_LIB_NAME}"
+          # 使用完整路径确保链接器能找到静态库
+          export LIBS="$NCURSES_DIR/lib/lib${NCURSES_LIB_NAME}.a"
           export CFLAGS="-fPIE -O2"
 
           # 交叉编译必需的缓存变量
@@ -138,8 +131,9 @@ jobs:
           echo "=== Compile environment ==="
           echo "NCURSES_LIB_NAME = ${NCURSES_LIB_NAME}"
           echo "LDFLAGS = ${LDFLAGS} -static -pie"
-          echo "LIBS = -l${NCURSES_LIB_NAME}"
-          make -j$(nproc) LDFLAGS="$LDFLAGS -static -pie" LIBS="-l${NCURSES_LIB_NAME}"
+          echo "LIBS = $NCURSES_DIR/lib/lib${NCURSES_LIB_NAME}.a"
+          # 使用完整路径确保链接
+          make -j$(nproc) LDFLAGS="$LDFLAGS -static -pie" LIBS="$NCURSES_DIR/lib/lib${NCURSES_LIB_NAME}.a"
           make install
 
       # --- 打包二进制文件 ---
