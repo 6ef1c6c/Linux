@@ -124,6 +124,11 @@ jobs:
           make install.libs install.data
           echo "NCURSES_DIR=$PWD/install" >> $GITHUB_ENV
 
+      - name: Debug - list ncurses library files
+        run: |
+          echo "=== NCURSES_DIR/lib contents ==="
+          ls -la $NCURSES_DIR/lib
+
       - name: Download and extract nano
         run: |
           wget "${{ steps.nano.outputs.url }}"
@@ -151,7 +156,8 @@ jobs:
       - name: Compile nano (static)
         run: |
           cd $NANO_SRC_DIR
-          make -j$(nproc) LDFLAGS="$LDFLAGS -pie -static" LIBS="-lncursesw -ltinfo"
+          # 使用静态链接，只链接 libncursesw（它通常包含 terminfo 功能）
+          make -j$(nproc) LDFLAGS="$LDFLAGS -static -pie" LIBS="-lncursesw"
           make install
 
       - name: Strip and package
