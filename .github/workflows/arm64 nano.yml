@@ -1,7 +1,7 @@
 name: Build static nano for Android (arm64) - latest version
 
 on:
-  workflow_dispatch:  # 手动触发
+  workflow_dispatch:
 
 jobs:
   build:
@@ -19,27 +19,30 @@ jobs:
           unzip android-ndk-r25c-linux.zip
           echo "NDK_PATH=${PWD}/android-ndk-r25c" >> $GITHUB_ENV
 
-      - name: Create standalone toolchain
+      - name: Set up NDK toolchain and create legacy symlinks
         run: |
-          export PATH=$NDK_PATH/build/tools:$PATH
-          $NDK_PATH/build/tools/make-standalone-toolchain.sh \
-            --arch=arm64 \
-            --api=21 \
-            --install-dir=/tmp/standalone-toolchain
-          echo "/tmp/standalone-toolchain/bin" >> $GITHUB_PATH
-          echo "STANDALONE_TOOLCHAIN=/tmp/standalone-toolchain" >> $GITHUB_ENV
-
-      - name: Set cross-compilation environment
-        run: |
+          export TOOLCHAIN=$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin
           export TARGET=aarch64-linux-android
-          export TOOLCHAIN=/tmp/standalone-toolchain
-          echo "CC=$TOOLCHAIN/bin/$TARGET-gcc" >> $GITHUB_ENV
-          echo "CXX=$TOOLCHAIN/bin/$TARGET-g++" >> $GITHUB_ENV
-          echo "AR=$TOOLCHAIN/bin/$TARGET-ar" >> $GITHUB_ENV
-          echo "RANLIB=$TOOLCHAIN/bin/$TARGET-ranlib" >> $GITHUB_ENV
-          echo "STRIP=$TOOLCHAIN/bin/$TARGET-strip" >> $GITHUB_ENV
+          export API=21
+
+          # Add toolchain directory to PATH
+          echo "$TOOLCHAIN" >> $GITHUB_PATH
+
+          # Create symlinks for legacy compiler names (some configure scripts expect these)
+          cd $TOOLCHAIN
+          ln -sf $TARGET$API-clang $TARGET-gcc
+          ln -sf $TARGET$API-clang++ $TARGET-g++
+          ln -sf llvm-ar $TARGET-ar
+          ln -sf llvm-ranlib $TARGET-ranlib
+
+          # Export variables for later steps
           echo "TARGET=$TARGET" >> $GITHUB_ENV
-          echo "API=21" >> $GITHUB_ENV
+          echo "API=$API" >> $GITHUB_ENV
+          echo "CC=$TARGET$API-clang" >> $GITHUB_ENV
+          echo "CXX=$TARGET$API-clang++" >> $GITHUB_ENV
+          echo "AR=llvm-ar" >> $GITHUB_ENV
+          echo "RANLIB=llvm-ranlib" >> $GITHUB_ENV
+          echo "STRIP=llvm-strip" >> $GITHUB_ENV
 
       - name: Get latest ncurses version
         id: ncurses
@@ -52,12 +55,9 @@ jobs:
       - name: Get latest nano version
         id: nano
         run: |
-          # 从官网下载页面提取最新版本
           HTML=$(curl -s https://www.nano-editor.org/download.php)
-          # 匹配类似 nano-8.3.tar.xz
           LATEST=$(echo "$HTML" | grep -oP 'nano-\K[0-9]+\.[0-9]+(?=\.tar\.xz)' | head -1)
           if [ -z "$LATEST" ]; then
-            # 降级方案：从 dist 目录获取主版本号
             MAJOR=$(curl -s https://www.nano-editor.org/dist/ | grep -oP 'v\K[0-9]+' | sort -n | tail -1)
             LATEST=$(curl -s https://www.nano-editor.org/dist/v$MAJOR/ | grep -oP "nano-$MAJOR\.[0-9]+\.tar\.xz" | grep -oP "nano-\K[0-9]+\.[0-9]+" | sort -V | tail -1)
           fi
@@ -74,7 +74,6 @@ jobs:
         run: |
           cd ncurses-*
           make distclean || true
-          export PATH=$TOOLCHAIN/bin:$PATH
           ./configure \
             --host=$TARGET \
             --prefix=$PWD/install \
@@ -101,7 +100,6 @@ jobs:
       - name: Configure and compile nano (static)
         run: |
           cd nano-*
-          export PATH=$TOOLCHAIN/bin:$PATH
           export CFLAGS="-fPIE -O2 -I$NCURSES_DIR/include"
           export LDFLAGS="-pie -static-libgcc -L$NCURSES_DIR/lib"
           export LIBS="-lncursesw -ltinfo"
@@ -128,7 +126,7 @@ jobs:
         run: |
           cd nano-*/install/bin
           $STRIP nano
-          echo "=== Checking linked libraries ==="
+          echo "=== Checking linked libraries (should only show system libs) ==="
           readelf -d nano | grep NEEDED || true
           mkdir -p $GITHUB_WORKSPACE/nano-android/terminfo
           cp -r $NCURSES_DIR/share/terminfo/* $GITHUB_WORKSPACE/nano-android/terminfo/
