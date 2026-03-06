@@ -165,8 +165,10 @@ jobs:
       - name: Compile nano (static)
         run: |
           cd $NANO_SRC_DIR
-          # 使用检测到的 ncurses 库名进行静态链接
-          make -j$(nproc) LDFLAGS="$LDFLAGS -static -pie" LIBS="-l${NCURSES_LIB_NAME}"
+          echo "=== Compiling with library: -l${NCURSES_LIB_NAME} ==="
+          echo "=== Library path: -L$NCURSES_DIR/lib ==="
+          # 显式指定库路径和静态链接标志
+          make -j$(nproc) LDFLAGS="-L$NCURSES_DIR/lib -static -pie" LIBS="-l${NCURSES_LIB_NAME}"
           make install
 
       - name: Strip and package
