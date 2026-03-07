@@ -140,13 +140,25 @@ jobs:
           # 清理旧编译
           make clean
 
-          # 详细编译，确保传递选项
+          # 详细编译，捕获输出到文件
           make -j$(nproc) V=1 LDFLAGS="$MY_LDFLAGS" LIBS="$MY_LIBS" \
                EXTRA_LDFLAGS="$MY_LDFLAGS" \
                LD="clang -target $TARGET$API" \
-               CC="$CC" CXX="$CXX"
+               CC="$CC" CXX="$CXX" 2>&1 | tee build.log
 
           make install
+
+      # --- 提取链接命令 ---
+      - name: Extract link command
+        run: |
+          cd $VIM_SRC_DIR/src
+          # 从 build.log 中提取包含 -o vim 的行（链接命令）
+          grep -E -- "-o vim" build.log | head -1 > link_cmd.txt
+          echo "=== Extracted link command ==="
+          cat link_cmd.txt
+          # 保存到工作空间
+          mkdir -p $GITHUB_WORKSPACE/link_info
+          cp link_cmd.txt $GITHUB_WORKSPACE/link_info/
 
       # --- 检查 TLS 段对齐 ---
       - name: Check TLS alignment
@@ -173,3 +185,10 @@ jobs:
         with:
           name: vim-android-binary-only
           path: vim-android-binary-only.tar.gz
+
+      # --- 上传链接命令文件作为额外 artifact ---
+      - name: Upload link command info
+        uses: actions/upload-artifact@v4
+        with:
+          name: link-command
+          path: $GITHUB_WORKSPACE/link_info/
