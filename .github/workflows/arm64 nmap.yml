@@ -114,7 +114,6 @@ jobs:
           cp *.h $PWD/../install/include/
           cp liblua.a $PWD/../install/lib/
 
-          # 设置 LUA_DIR 为 install 目录
           echo "LUA_DIR=$PWD/../install" >> $GITHUB_ENV
           cd ../..
 
@@ -126,12 +125,12 @@ jobs:
           tar xf nmap-$VER.tar.bz2
           echo "NMAP_SRC_DIR=$PWD/nmap-$VER" >> $GITHUB_ENV
 
-      # 删除内部 liblua 目录，强制使用外部 lua
+      # 删除内部 liblua 目录（我们已经使用外部 lua）
       - name: Remove internal liblua
         run: |
           rm -rf $NMAP_SRC_DIR/liblua
 
-      - name: Configure nmap (static)
+      - name: Configure nmap (static, minimal features)
         run: |
           cd $NMAP_SRC_DIR
           export CPPFLAGS="-I$OPENSSL_DIR/include -I$LIBPCAP_DIR/include -I$LUA_DIR/include"
@@ -141,12 +140,17 @@ jobs:
           export ac_cv_func_realloc_0_nonnull=yes
           export lt_cv_sys_max_cmd_len=32768
           export CFLAGS="-fPIE -O2"
+
+          # 禁用不必要的内部库，只保留核心功能
           ./configure \
             --host=$TARGET \
             --build=x86_64-linux-gnu \
             --prefix=$PWD/install \
             --without-zenmap \
             --without-nmap-update \
+            --without-libssh \
+            --without-pcre \
+            --without-liblinear \
             --with-pcap=linux \
             --with-openssl=$OPENSSL_DIR \
             --with-liblua=$LUA_DIR \
@@ -154,11 +158,11 @@ jobs:
             --enable-static \
             --disable-shared
 
-      - name: Compile nmap (static)
+      - name: Compile nmap (static) with verbose output
         run: |
           cd $NMAP_SRC_DIR
-          # 静态链接，库顺序：lua, pcap, ssl, crypto, m
-          make -j$(nproc) LDFLAGS="$LDFLAGS -static -pie -Wl,-z,max-page-size=0x1000 -Wl,-z,common-page-size=0x1000" LIBS="-llua -lpcap -lssl -lcrypto -lm"
+          # 添加 V=1 获取详细输出，便于调试
+          make -j$(nproc) V=1 LDFLAGS="$LDFLAGS -static -pie -Wl,-z,max-page-size=0x1000 -Wl,-z,common-page-size=0x1000" LIBS="-llua -lpcap -lssl -lcrypto -lm"
           make install
 
       - name: Strip and package
