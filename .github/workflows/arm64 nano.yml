@@ -33,7 +33,6 @@ jobs:
           echo "STRIP=$BIN_DIR/llvm-strip" >> $GITHUB_ENV
           echo "TARGET=$TARGET" >> $GITHUB_ENV
 
-      # --- 获取最新 ncurses 版本 ---
       - name: Get latest ncurses version
         id: ncurses
         run: |
@@ -41,7 +40,6 @@ jobs:
           echo "version=${LATEST:-6.5}" >> $GITHUB_OUTPUT
           echo "url=ftp://ftp.gnu.org/gnu/ncurses/ncurses-$LATEST.tar.gz" >> $GITHUB_OUTPUT
 
-      # --- 获取最新 nano 版本 ---
       - name: Get latest nano version
         id: nano
         run: |
@@ -56,8 +54,7 @@ jobs:
           echo "version=${LATEST:-8.3}" >> $GITHUB_OUTPUT
           echo "url=https://www.nano-editor.org/dist/v${LATEST%%.*}/nano-$LATEST.tar.xz" >> $GITHUB_OUTPUT
 
-      # --- 编译 ncurses（动态库）---
-      - name: Download and build ncurses (shared)
+      - name: Build ncurses (shared libraries only)
         run: |
           wget "${{ steps.ncurses.outputs.url }}"
           tar xf ncurses-*.tar.gz
@@ -72,12 +69,12 @@ jobs:
             --without-ada \
             --enable-widec \
             --enable-termcap \
-            CFLAGS="-fPIC"  # 生成位置无关代码
+            --without-progs \
+            CFLAGS="-fPIC"
           make -j$(nproc)
-          make install
+          make install.libs
           echo "NCURSES_DIR=$PWD/install" >> $GITHUB_ENV
 
-      # --- 下载 nano 源码 ---
       - name: Download nano source
         run: |
           wget "${{ steps.nano.outputs.url }}"
@@ -85,8 +82,7 @@ jobs:
           SRC_DIR=$(tar tf nano-*.tar.xz | head -1 | cut -d/ -f1)
           echo "NANO_SRC_DIR=$PWD/$SRC_DIR" >> $GITHUB_ENV
 
-      # --- 配置 nano（动态链接）---
-      - name: Configure nano (dynamic)
+      - name: Configure nano
         run: |
           cd $NANO_SRC_DIR
           export CPPFLAGS="-I$NCURSES_DIR/include -I$NCURSES_DIR/include/ncursesw"
@@ -101,14 +97,12 @@ jobs:
             --disable-nls \
             --disable-speller
 
-      # --- 编译 nano（动态链接）---
-      - name: Compile nano (dynamic)
+      - name: Compile nano
         run: |
           cd $NANO_SRC_DIR
           make -j$(nproc) LDFLAGS="$LDFLAGS -pie" LIBS="-lncursesw -lm"
           make install
 
-      # --- 打包二进制文件及其依赖库 ---
       - name: Package nano with libraries
         run: |
           mkdir -p output
