@@ -1,74 +1,66 @@
-name: Build ksu_cmd Kernel Module
-
-on:
-  workflow_dispatch:
+name: Build Ring0 KO (Strict Version Match)
+on: [push, workflow_dispatch]
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install build dependencies
+      - name: Install Build Dependencies
         run: |
-          sudo apt update
-          sudo apt install -y git build-essential flex bison bc python3 curl
+          sudo apt-get update
+          sudo apt-get install -y bc build-essential libelf-dev libssl-dev flex bison git
 
-      - name: Clone main kernel source (OnePlus 11R / Ace 2 Android 13)
+      - name: Setup Android Clang (GKI Toolchain)
         run: |
-          git clone --depth 1 --branch oneplus_sm8475_t_13.0_oneplus_11R_5G \
-            https://github.com/OnePlusOSS/android_kernel_oneplus_sm8475.git kernel_src
+          # 下载 5.10 GKI 推荐的 Clang 版本 (r450784d)
+          wget https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/clang-r450784d.tar.gz
+          mkdir clang && tar -C clang -xzf clang-r450784d.tar.gz
 
-      - name: Clone modules and devicetree repository
+      - name: Fetch GKI Kernel Headers
         run: |
-          git clone --depth 1 --branch oneplus_sm8475_t_13.0_oneplus_11R_5G \
-            https://github.com/OnePlusOSS/android_kernel_modules_and_devicetree_oneplus_sm8475.git modules_src
+          # 拉取 5.10 分支的通用内核源码
+          git clone --depth 1 https://android.googlesource.com/kernel/common -b android12-5.10 kernel-source
 
-      - name: Merge modules into kernel source
+      - name: FORCE VERSION ALIGNMENT
         run: |
-          # 将模块仓库的内容复制到内核源码树，覆盖/合并
-          cp -r modules_src/* kernel_src/
+          cd kernel-source
+          # 1. 强制修改主版本号
+          sed -i 's/^VERSION =.*/VERSION = 5/' Makefile
+          sed -i 's/^PATCHLEVEL =.*/PATCHLEVEL = 10/' Makefile
+          sed -i 's/^SUBLEVEL =.*/SUBLEVEL = 117/' Makefile
+          
+          # 2. 强制抹除默认的 EXTRAVERSION 并写入你的特定后缀
+          # 目标: 5.10.117-android12-9-g287b9af3dd02
+          sed -i 's/^EXTRAVERSION =.*/EXTRAVERSION = -android12-9-g287b9af3dd02/' Makefile
+          
+          # 3. 禁用内核自动添加的 "+" 号 (防止版本变成 5.10.117+)
+          scripts/config --file .config --disable LOCALVERSION_AUTO
+          echo "-android12-9-g287b9af3dd02" > localversion
 
-      - name: (Optional) Clone common components if needed
+      - name: Prepare GKI Config
         run: |
-          # 如果上面合并后仍然缺失文件，可以再克隆公共组件仓库并合并
-          # 这里先注释，若后续失败可取消注释
-          # git clone --depth 1 --branch oneplus_sm8475_t_13.0_oneplus_11R_5G \
-          #   https://github.com/OnePlusOSS/android_kernel_common_oneplus_sm8475.git common_src
-          # cp -r common_src/* kernel_src/
-          echo "Skipping common components for now."
+          export PATH=${{ github.workspace }}/clang/bin:$PATH
+          cd kernel-source
+          # 使用通用的 GKI 配置作为基准
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 gki_defconfig
 
-      - name: Prepare kernel config
+      - name: Build Ring0 Module
         run: |
-          cd kernel_src
-          # 使用你从手机提取的 .config 文件（强烈推荐）
-          if [ -f ../config ]; then
-            cp ../config .config
-            echo "Using provided config file"
-          else
-            echo "No config file provided, using defconfig"
-            make ARCH=arm64 defconfig
-          fi
-          # 处理缺失的 Kconfig 文件（可能已有）
-          make ARCH=arm64 olddefconfig
-          make ARCH=arm64 prepare
-          make ARCH=arm64 modules_prepare
+          export PATH=${{ github.workspace }}/clang/bin:$PATH
+          cd kernel-source
+          # KDIR 指向当前内核源码，M 指向工作区根目录（存放 ring0_exec.c 和 Makefile 的地方）
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 M=${{ github.workspace }} modules
 
-      - name: Build module
+      - name: Verify Vermagic
         run: |
-          export ARCH=arm64
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          export PATH=$PATH:/usr/bin
-          cd kernel_src
-          # 复制你的模块源码和 Makefile
-          cp ../ksu_cmd.c ./
-          cp ../Makefile ./
-          # 编译模块
-          make -j$(nproc) M=$PWD modules
+          # 在上传前检查生成文件的版本信息，确保对齐成功
+          modinfo ./ring0_exec.ko | grep vermagic
 
-      - name: Upload artifact
+      - name: Upload Ring0 Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ksu_cmd
-          path: kernel_src/ksu_cmd.ko
+          name: ring0_5.10.117_aligned
+          path: ./*.ko
