@@ -15,15 +15,34 @@ jobs:
           sudo apt update
           sudo apt install -y git build-essential flex bison bc python3 curl
 
-      - name: Clone kernel source (OnePlus 11R / Ace 2 Android 13)
+      - name: Clone main kernel source (OnePlus 11R / Ace 2 Android 13)
         run: |
           git clone --depth 1 --branch oneplus_sm8475_t_13.0_oneplus_11R_5G \
             https://github.com/OnePlusOSS/android_kernel_oneplus_sm8475.git kernel_src
 
+      - name: Clone modules and devicetree repository
+        run: |
+          git clone --depth 1 --branch oneplus_sm8475_t_13.0_oneplus_11R_5G \
+            https://github.com/OnePlusOSS/android_kernel_modules_and_devicetree_oneplus_sm8475.git modules_src
+
+      - name: Merge modules into kernel source
+        run: |
+          # 将模块仓库的内容复制到内核源码树，覆盖/合并
+          cp -r modules_src/* kernel_src/
+
+      - name: (Optional) Clone common components if needed
+        run: |
+          # 如果上面合并后仍然缺失文件，可以再克隆公共组件仓库并合并
+          # 这里先注释，若后续失败可取消注释
+          # git clone --depth 1 --branch oneplus_sm8475_t_13.0_oneplus_11R_5G \
+          #   https://github.com/OnePlusOSS/android_kernel_common_oneplus_sm8475.git common_src
+          # cp -r common_src/* kernel_src/
+          echo "Skipping common components for now."
+
       - name: Prepare kernel config
         run: |
           cd kernel_src
-          # 使用提供的 config 文件（强烈推荐）
+          # 使用你从手机提取的 .config 文件（强烈推荐）
           if [ -f ../config ]; then
             cp ../config .config
             echo "Using provided config file"
@@ -31,7 +50,7 @@ jobs:
             echo "No config file provided, using defconfig"
             make ARCH=arm64 defconfig
           fi
-          # 准备构建环境
+          # 处理缺失的 Kconfig 文件（可能已有）
           make ARCH=arm64 olddefconfig
           make ARCH=arm64 prepare
           make ARCH=arm64 modules_prepare
@@ -42,7 +61,7 @@ jobs:
           export CROSS_COMPILE=aarch64-linux-gnu-
           export PATH=$PATH:/usr/bin
           cd kernel_src
-          # 复制模块源码和 Makefile
+          # 复制你的模块源码和 Makefile
           cp ../ksu_cmd.c ./
           cp ../Makefile ./
           # 编译模块
