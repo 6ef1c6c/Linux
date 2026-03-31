@@ -1,0 +1,49 @@
+name: Build ksu_cmd Kernel Module
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y git build-essential flex bison bc python3 curl
+
+      - name: Clone kernel source
+        run: |
+          # 一加 Ace 2 内核源码仓库（Android 13，内核 5.10）
+          git clone --depth 1 --branch oneplus/SM8550_Q_13.0.0 https://github.com/OnePlusOSS/kernel_platform.git kernel_src
+          cd kernel_src
+          # 复制手机 .config 文件（如果提供）
+          if [ -f ../config ]; then
+            cp ../config .config
+          else
+            # 如果没有提供 .config，使用默认配置（可能不精确）
+            make ARCH=arm64 defconfig
+          fi
+          # 准备 Module.symvers（简单模块可不需）
+          # 这里跳过，因为我们的模块只使用标准内核符号
+
+      - name: Build module
+        run: |
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export PATH=$PATH:/usr/bin
+          cd kernel_src
+          # 复制模块源码和 Makefile
+          cp ../ksu_cmd.c ./
+          cp ../Makefile ./
+          # 编译模块
+          make -j$(nproc) M=$PWD modules
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ksu_cmd
+          path: kernel_src/ksu_cmd.ko
