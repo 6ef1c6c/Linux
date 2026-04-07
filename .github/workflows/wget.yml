@@ -85,7 +85,6 @@ jobs:
           tar -xf readline-8.2.tar.gz
           cd readline-8.2
 
-          # Fix for static build: remove -D_FORTIFY_SOURCE=2
           sed -i 's/-D_FORTIFY_SOURCE=2//g' support/shobj-conf
 
           ./configure \
@@ -123,8 +122,7 @@ jobs:
           tar -xf bash-5.2.tar.gz
           cd bash-5.2
 
-          # Configure for fully static build, disable pwent functions (not available on Android)
-          # and disable -Werror, also disable bash malloc to avoid potential issues
+          # Configure, disabling pwent functions and warning flags
           ./configure \
             --host=$HOST \
             --disable-shared \
@@ -138,7 +136,6 @@ jobs:
             ac_cv_func_setpwent=no \
             ac_cv_func_getpwent=no \
             ac_cv_func_endpwent=no \
-            ac_cv_func_getpwuid=no \
             CPPFLAGS="-D_GNU_SOURCE" \
             CC="$TOOLCHAIN_PATH/bin/${TOOLCHAIN}-clang" \
             AR="$TOOLCHAIN_PATH/bin/llvm-ar" \
@@ -147,12 +144,13 @@ jobs:
             LDFLAGS="-static -s -fPIE -L$(pwd)/../../deps/readline-8.2/install/lib -L$(pwd)/../../deps/ncurses-6.4/install/lib" \
             LIBS="-lreadline -lncursesw -ltinfo"
 
-          # Patch config.h to forcefully undefine HAVE_SETPWENT etc.
-          sed -i 's/#define HAVE_SETPWENT 1/\/* #undef HAVE_SETPWENT *\//' config.h
-          sed -i 's/#define HAVE_GETPWENT 1/\/* #undef HAVE_GETPWENT *\//' config.h
-          sed -i 's/#define HAVE_ENDPWENT 1/\/* #undef HAVE_ENDPWENT *\//' config.h
-          # Also patch any other potential issues
-          sed -i 's/#define HAVE_GETPWUID 1/\/* #undef HAVE_GETPWUID *\//' config.h
+          # Patch complete.c: comment out calls to setpwent, getpwent, endpwent
+          sed -i 's/^[[:space:]]*setpwent();/\/\* setpwent(); \*\//' complete.c
+          sed -i 's/while (entry = getpwent ())/while (0)/' complete.c
+          sed -i 's/^[[:space:]]*endpwent();/\/\* endpwent(); \*\//' complete.c
+
+          # Also patch any other potential occurrences (e.g., in bashline.c if needed)
+          # But complete.c is the main offender.
 
           make -j$(nproc) bash
           $TOOLCHAIN_PATH/bin/llvm-strip --strip-all bash
