@@ -34,10 +34,15 @@ jobs:
             tar xzf ${LATEST_VERSION}.tar.gz && \
             cd lsof-${LATEST_VERSION} && \
 
-            # 配置并编译（关键：设置 LDFLAGS 强制静态链接）
+            # 配置构建
             ./Configure -n linux && \
+
+            # 强制修改 Makefile 以进行静态链接
             sed -i 's/^LDFLAGS =$/LDFLAGS = -static -all-static/' Makefile && \
-            make -j\$(nproc) && \
+            sed -i 's/^CFLAGS =/CFLAGS = -static/' Makefile && \
+
+            # 编译，直接在 CC 中注入 -static 确保链接阶段静态
+            make -j\$(nproc) CC=\"gcc -static\" && \
 
             # 验证静态链接
             file ./lsof | grep 'statically linked' || { echo 'Error: lsof is not statically linked'; exit 1; } && \
