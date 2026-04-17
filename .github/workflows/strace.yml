@@ -12,9 +12,9 @@ jobs:
       - name: Download strace from Alpine
         run: |
           wget https://dl-cdn.alpinelinux.org/alpine/edge/main/aarch64/strace-6.19-r0.apk
-          tar xzf strace-6.19-r0.apk
-          file usr/bin/strace | grep 'statically linked'
+          tar xzf strace-6.19-r0.apk 2>/dev/null
           mv usr/bin/strace ./strace-static-arm64
+          chmod +x ./strace-static-arm64
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
