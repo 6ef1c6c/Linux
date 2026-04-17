@@ -1,35 +1,16 @@
-name: Fetch strace (ARM64 Static)
-
-on:
-  workflow_dispatch:
-
-jobs:
-  fetch:
-    name: Fetch strace (ARM64)
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Download latest strace static binary
-        run: |
-          # 获取最新版本号
-          LATEST_VERSION=$(curl -s https://api.github.com/repos/strace/strace/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | sed 's/^v//')
-          echo "Latest strace version: ${LATEST_VERSION}"
-
-          # 下载官方静态二进制 (aarch64)
-          wget https://github.com/strace/strace/releases/download/v${LATEST_VERSION}/strace-${LATEST_VERSION}-aarch64-static.tar.xz
-
-          # 解压
-          tar xf strace-${LATEST_VERSION}-aarch64-static.tar.xz
-
-          # 验证静态链接
-          file ./strace | grep 'statically linked' || { echo 'Error: strace is not statically linked'; exit 1; }
-
-          # 重命名以匹配构件名称
-          mv ./strace ./strace-static-arm64
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: strace-static-arm64
-          path: ./strace-static-arm64
-          retention-days: 90
+- name: Fetch strace static binary from Alpine
+  run: |
+    # 下载 Alpine 的 strace 包 (aarch64)
+    wget https://dl-cdn.alpinelinux.org/alpine/edge/main/aarch64/strace-6.19-r0.apk
+    
+    # 解压 APK 包
+    tar xzf strace-6.19-r0.apk
+    
+    # 验证静态链接
+    file usr/bin/strace | grep 'statically linked' || { echo 'Error: not static'; exit 1; }
+    
+    # 重命名并放置到工作区
+    mv usr/bin/strace ./strace-static-arm64
+    
+    # 清理临时文件
+    rm -rf usr/ strace-6.19-r0.apk
